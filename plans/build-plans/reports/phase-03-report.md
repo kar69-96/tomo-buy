@@ -1,7 +1,7 @@
 # Phase 03 Report — Vaults A/B + Executor trust boundary
 
 - **Wave:** 2
-- **Branch / PR:** feat/phase-03 → #PR_PLACEHOLDER
+- **Branch / PR:** feat/phase-03 → #4
 - **Owned packages:** `packages/vaults/`, `packages/executor/`
 - **Date:** 2026-06-22
 - **Result:** ✅ complete
