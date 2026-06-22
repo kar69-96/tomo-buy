@@ -57,7 +57,10 @@ Done with any failing test or with <80% line coverage on the package(s) it owns.
 
 ---
 
-## 4. PR creation
+## 4. PR creation + auto-merge
+
+Open the PR, then **immediately auto-merge it** — phases own disjoint package dirs, so parallel
+PRs in a wave merge into `main` without conflicts and no human hand-merge is needed.
 
 ```bash
 git push -u origin feat/<phase-id>
@@ -66,9 +69,21 @@ gh pr create \
   --title "<phase-id>: <one-line goal>" \
   --label "wave-<n>" \
   --body-file plans/build-plans/reports/phase-<phase-id>-report.md
+
+# Auto-merge into main (squash), then clean up the branch + worktree
+gh pr merge --squash --delete-branch --admin
+git worktree remove ../tomo-<phase-id> 2>/dev/null || true
 ```
 
 PR body = the report (below). Title = phase id + goal. Base = `main`.
+
+**Auto-merge rules:**
+- Merge **only when the Definition of Done is fully met** (build green, tests green, coverage ≥ 80%,
+  report committed). Never auto-merge a red branch — a failing phase stays an open PR and the report
+  says why.
+- `--admin` bypasses branch-protection prompts so automation doesn't stall; it does **not** excuse a
+  failing DoD. If the merge is genuinely not mergeable (real conflict), stop and report it.
+- The committed `report.md` rides into `main` via the squash, so every merged wave carries its reports.
 
 ---
 
@@ -90,12 +105,16 @@ deviations from the plan, follow-ups, and which `plans/spec/02-open-decisions.md
 - [ ] Prime-directive check: no secret in LLM context or logs (grep the test transcript).
 - [ ] `report.md` written, committed, and used as the PR body.
 - [ ] PR opened against `main` with the `wave-<n>` label.
+- [ ] PR **auto-merged** into `main` (`gh pr merge --squash --delete-branch --admin`) once all the
+      above are green; branch + worktree cleaned up.
 
 ---
 
 ## 7. Wave discipline
 
 - A wave's phases run **in parallel** on disjoint dirs.
-- A wave is **complete only when every phase PR in it is merged to `main`** (see `WAVES.md`).
+- Each phase **auto-merges its own PR** (§4) once its DoD is green, so a wave reaches "complete"
+  without manual merging — it's complete when every phase in it has auto-merged to `main`.
 - Do not start a later-wave phase until its prerequisite wave is fully merged — your git-sync step
-  depends on that merged code existing on `main`.
+  depends on that merged code existing on `main`. If a same-wave sibling is still open/red, that's
+  fine; later **waves** still gate on the whole prior wave being merged.

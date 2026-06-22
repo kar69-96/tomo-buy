@@ -107,6 +107,10 @@ pnpm --filter api dev   # then drive via apps/ui or curl the /intent→/route→
 git push -u origin feat/phase-05
 gh pr create --base main --title "phase-05: live Lane B P2 guest-checkout slice" \
   --label "wave-3" --body-file plans/build-plans/reports/phase-05-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 ## PR report (required)

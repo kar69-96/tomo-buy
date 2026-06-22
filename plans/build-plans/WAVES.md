@@ -1,8 +1,10 @@
 # Wave Schedule & Gating
 
 Phases are grouped into ordered **waves**. Phases **within a wave run in parallel** (they own
-disjoint package directories, so worktrees never collide at merge). A wave is a **hard gate**:
-the next wave does not begin until **every** phase PR in the current wave is merged to `main`.
+disjoint package directories, so worktrees never collide at merge). Each phase **auto-merges its own
+PR** into `main` once its Definition of Done is green (see `00-CONVENTIONS.md` §4) — no manual
+hand-merge. A wave is a **hard gate**: the next wave does not begin until **every** phase PR in the
+current wave has auto-merged to `main`.
 
 ```
 WAVE 1   phase-00  scaffold + ALL contracts + stubs           ── merge ──►  GATE
@@ -40,7 +42,8 @@ Lane B P2 path. It is solo because it integrates everything.
 
 ## Gate checklist (run before opening the next wave)
 
-- [ ] Every phase PR in the current wave is **merged** to `main` (not just opened).
+- [ ] Every phase PR in the current wave has **auto-merged** to `main` (not just opened); any phase
+      that stayed an open PR was red — fix and re-run it before opening the next wave.
 - [ ] `main` is green: `pnpm build && pnpm test` pass on a fresh clone.
 - [ ] Each merged phase committed its `reports/phase-<id>-report.md`.
 - [ ] Any follow-ups flagged in those reports are triaged (fix now vs. defer).

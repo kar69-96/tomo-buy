@@ -71,6 +71,10 @@ pnpm build && pnpm test --filter @tomo/profiles && pnpm test
 git push -u origin feat/phase-11-profile-drift-health
 gh pr create --base main --title "phase-11: profile drift health checks" \
   --label "wave-TBD" --body-file plans/build-plans/reports/phase-11-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 Write + commit `reports/phase-11-report.md`. Note any merchant profiles found stale/incorrect during

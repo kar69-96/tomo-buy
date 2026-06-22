@@ -74,6 +74,10 @@ pnpm build && pnpm test --filter @tomo/funding && pnpm test
 git push -u origin feat/phase-06-lane-a-buy
 gh pr create --base main --title "phase-06: Lane A via Agentcard /buy" \
   --label "wave-TBD" --body-file plans/build-plans/reports/phase-06-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 Write + commit `plans/build-plans/reports/phase-06-report.md` (template in `reports/README.md`).

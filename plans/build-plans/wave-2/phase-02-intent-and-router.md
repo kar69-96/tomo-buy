@@ -110,6 +110,10 @@ pnpm build && pnpm test --filter intent --filter router --filter profiles
 git push -u origin feat/phase-02
 gh pr create --base main --title "phase-02: intent parser + deterministic router" \
   --label "wave-2" --body-file plans/build-plans/reports/phase-02-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 ## PR report (required)

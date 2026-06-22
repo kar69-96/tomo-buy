@@ -117,6 +117,10 @@ AGENTCARD_API_KEY=sk_test_... npx tsx packages/funding/scripts/verify-sandbox.ts
 git push -u origin feat/phase-01
 gh pr create --base main --title "phase-01: Agentcard rail (M0) + x402 port" \
   --label "wave-2" --body-file plans/build-plans/reports/phase-01-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 ## PR report (required)

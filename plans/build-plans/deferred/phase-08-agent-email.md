@@ -77,6 +77,10 @@ pnpm build && pnpm test --filter @tomo/email && pnpm test
 git push -u origin feat/phase-08-agent-email
 gh pr create --base main --title "phase-08: agent email infrastructure" \
   --label "wave-TBD" --body-file plans/build-plans/reports/phase-08-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 Write + commit `reports/phase-08-report.md`. Note domain-warming status and the Lane A inbox-redirect

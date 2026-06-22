@@ -69,6 +69,10 @@ pnpm build && pnpm test --filter @tomo/sso && pnpm test
 git push -u origin feat/phase-09-p1-sso
 gh pr create --base main --title "phase-09: P1 SSO/OAuth" \
   --label "wave-TBD" --body-file plans/build-plans/reports/phase-09-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 Write + commit `reports/phase-09-report.md`.

@@ -81,6 +81,10 @@ pnpm build && pnpm test --filter @tomo/rails-x402 && pnpm test
 git push -u origin feat/phase-10-p0-machine-rail
 gh pr create --base main --title "phase-10: P0 machine rail (x402/MPP + catalog)" \
   --label "wave-TBD" --body-file plans/build-plans/reports/phase-10-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 Write + commit `reports/phase-10-report.md`. **Explicitly record** the settlement-wallet custody status

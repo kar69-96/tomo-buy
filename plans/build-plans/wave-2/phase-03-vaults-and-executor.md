@@ -103,6 +103,10 @@ pnpm build && pnpm test --filter vaults --filter executor
 git push -u origin feat/phase-03
 gh pr create --base main --title "phase-03: vaults A/B + executor trust boundary" \
   --label "wave-2" --body-file plans/build-plans/reports/phase-03-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 ## PR report (required)

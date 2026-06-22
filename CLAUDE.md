@@ -45,7 +45,11 @@ public docs — see `plans/spec/01-reality-reconciliation.md`):
 7. **PR-report rule (hard).** When a phase opens its PR, it writes
    `plans/build-plans/reports/phase-<id>-report.md`, commits it onto the PR branch, and pastes the
    same content into the PR body. The report is honest about failures and known gaps.
-8. **Errors handled explicitly.** No silent swallowing. User-facing messages in UI code; detailed
+8. **Auto-merge rule.** Once a phase's Definition of Done is green (build + tests pass, coverage ≥ 80%,
+   report committed), it **auto-merges its own PR** into `main` (`gh pr merge --squash --delete-branch
+   --admin`). Phases own disjoint dirs so parallel merges don't conflict. Never auto-merge a red branch
+   — a failing phase stays an open PR with the report explaining why.
+9. **Errors handled explicitly.** No silent swallowing. User-facing messages in UI code; detailed
    context server-side.
 
 ## Stack & commands

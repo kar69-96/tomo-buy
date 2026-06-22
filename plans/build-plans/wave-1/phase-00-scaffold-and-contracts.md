@@ -117,6 +117,10 @@ node -e "require('./packages/core/dist/index.js')"   # sanity: contracts load
 git push -u origin feat/phase-00
 gh pr create --base main --title "phase-00: scaffold + freeze contracts" \
   --label "wave-1" --body-file plans/build-plans/reports/phase-00-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 ## PR report (required)

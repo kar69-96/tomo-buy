@@ -79,6 +79,10 @@ pnpm build && pnpm test --filter @tomo/executor && pnpm test
 git push -u origin feat/phase-07-lane-b-p3-signup
 gh pr create --base main --title "phase-07: Lane B P3 signup + three-way oracle" \
   --label "wave-TBD" --body-file plans/build-plans/reports/phase-07-report.md
+
+# Auto-merge into main once the Definition of Done is green.
+# Disjoint package dirs mean parallel wave PRs merge without conflict; no human hand-merge.
+gh pr merge --squash --delete-branch --admin
 ```
 
 Write + commit `reports/phase-07-report.md`. In the report, note ToS/consent (§15 #2) handling and any
