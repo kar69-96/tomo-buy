@@ -1,12 +1,34 @@
-import type { CardRef, PiiField } from '@tomo/core';
-import { NotImplementedError } from '@tomo/core';
-
 /**
- * Stub Executor. The ONLY component that opens secrets and injects them into a
- * page. Returns nothing but a success flag — never a secret. (Prime directive.)
+ * @tomo/executor — the trusted-side secret injector.
+ *
+ * The ONLY component that opens a secret (PAN/CVV, PII field, agent password) and
+ * injects it into a page. The LLM/agent sees only `%var%` placeholders; real
+ * values are assembled trusted-side, swapped into the DOM for milliseconds via
+ * the verbatim atomic-swap script, and never returned, logged, or transcribed.
+ * Checkout returns flags + non-secret status only. (Prime directive.)
  */
-export class ExecutorStub {
-  async fillAndSubmit(_cardRef: CardRef, _fields: PiiField[]): Promise<boolean> {
-    throw new NotImplementedError('executor.fillAndSubmit');
-  }
-}
+
+export { Executor } from './executor.js';
+export type {
+  ExecutorResult,
+  ExecutorDeps,
+  CheckoutParams,
+  GetCardSecret,
+  ReleasingVaultB,
+} from './executor.js';
+export type { BrowserDriver, FieldDescriptor } from './browser/driver.js';
+export { PlaywrightDriver } from './browser/playwright-driver.js';
+export {
+  assertAmountWithinCeiling,
+  assertShipToFromVault,
+  assertMerchantMatches,
+  surfaceInstructions,
+  type Address,
+} from './guardrails.js';
+export {
+  PLACEHOLDER_MAP,
+  getPlaceholderVariables,
+  credentialsToSwapMap,
+  getAtomicSwapScript,
+  type BillingCredentials,
+} from './placeholder.js';

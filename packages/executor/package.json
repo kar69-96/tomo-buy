@@ -2,7 +2,7 @@
   "name": "@tomo/executor",
   "version": "0.0.0",
   "private": true,
-  "description": "Trusted-side Executor (secret injection) — STUB; implemented in phase-03.",
+  "description": "Trusted-side Executor: placeholder fill + atomic secret swap in a real headless browser. Returns flags only; secrets never reach the LLM or logs.",
   "type": "module",
   "exports": {
     ".": {
@@ -22,14 +22,18 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "dev": "tsup --watch",
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
-    "@tomo/core": "workspace:*"
+    "@tomo/core": "workspace:*",
+    "playwright": "^1.49.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "happy-dom": "^15.0.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

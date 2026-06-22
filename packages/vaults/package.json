@@ -2,7 +2,7 @@
   "name": "@tomo/vaults",
   "version": "0.0.0",
   "private": true,
-  "description": "Vault A (agent secrets) + Vault B (PII) — STUB; implemented in phase-03.",
+  "description": "Vault A (agent secrets) + Vault B (PII): field-level release, per-field audit, deletion path, AES-256-GCM at rest.",
   "type": "module",
   "exports": {
     ".": {
@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "dev": "tsup --watch",
     "clean": "rm -rf dist coverage"
   },
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
