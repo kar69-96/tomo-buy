@@ -1,9 +1,9 @@
-import type { RoutingDecision, MerchantProfile, TaskIntent } from '@tomo/core';
-import { NotImplementedError } from '@tomo/core';
-
-/** Stub router. Maps (intent, profile) to a RoutingDecision via the cascade. */
-export class RouterStub {
-  async route(_intent: TaskIntent, _profile: MerchantProfile): Promise<RoutingDecision> {
-    throw new NotImplementedError('router.route');
-  }
-}
+/**
+ * @tomo/router — the deterministic routing cascade (§6).
+ *
+ * `route(profile, intent)` is a pure function: given a merchant profile and a
+ * parsed, validated intent, it returns the `RoutingDecision` (a path plus
+ * human-readable reasons, and an `explain_cant` detail on terminal refusals).
+ * No LLM, no IO, no clock.
+ */
+export { route } from './cascade.js';
