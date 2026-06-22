@@ -1,7 +1,7 @@
 # Phase 00 Report — Scaffold & Freeze Contracts
 
 - **Wave:** 1 (solo, blocking)
-- **Branch / PR:** feat/phase-00 → #<pr-number>
+- **Branch / PR:** feat/phase-00 → #1
 - **Owned packages:** repo-root config; `packages/core` (full); stub `packages/{funding,rails-x402,vaults,intent,router,executor,orchestrator,profiles,api}`; stub `apps/{worker,ui}`
 - **Date:** 2026-06-22
 - **Result:** ✅ complete
