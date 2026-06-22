@@ -1,31 +1,38 @@
-import type {
-  FundingRail,
-  CardholderRef,
-  CardRef,
-  PAN_CVV_EXP,
-  Txn,
-  ChargeEvent,
-} from '@tomo/core';
-import { NotImplementedError } from '@tomo/core';
+/**
+ * @tomo/funding — the card funding rail.
+ *
+ * - `AgentcardRail` implements `FundingRail` against the documented Agentcard
+ *   REST API (M0: hold → capture → release). Cents-only; rejects > $50/card.
+ * - `BuyToolRail` is the Lane A `/buy` stub — fails closed with
+ *   EXPLAIN_CANT(lane_a_unavailable) until phase-06.
+ * - Webhook verification + an append-only event store back `listTransactions`
+ *   (the reconciliation source of truth).
+ *
+ * SECRET-FLOW: card PAN/CVV (from `getCardSecret`) flows ONLY to the Executor's
+ * page-fill path — never to the LLM, never logged.
+ */
 
-/** Stub FundingRail. Every method throws until phase-01 wires AgentcardRail. */
-export class FundingRailStub implements FundingRail {
-  async ensureCardholder(_userId: string): Promise<CardholderRef> {
-    throw new NotImplementedError('funding.ensureCardholder');
-  }
-  async issueCard(_userId: string, _amountCents: number, _merchantId: string): Promise<CardRef> {
-    throw new NotImplementedError('funding.issueCard');
-  }
-  async getCardSecret(_cardRef: CardRef): Promise<PAN_CVV_EXP> {
-    throw new NotImplementedError('funding.getCardSecret');
-  }
-  async closeCard(_cardRef: CardRef): Promise<void> {
-    throw new NotImplementedError('funding.closeCard');
-  }
-  async listTransactions(_cardRef: CardRef): Promise<Txn[]> {
-    throw new NotImplementedError('funding.listTransactions');
-  }
-  onWebhook(_event: ChargeEvent): void {
-    throw new NotImplementedError('funding.onWebhook');
-  }
-}
+export {
+  AgentcardClient,
+  AgentcardError,
+  AGENTCARD_BASE_URL,
+  type FetchLike,
+  type AgentcardClientOptions,
+  type CreateCardholderInput,
+  type CardResponse,
+  type CardDetailsResponse,
+  type AgentcardErrorMeta,
+} from './agentcard/client.js';
+
+export {
+  AgentcardRail,
+  MIN_CARD_CENTS,
+  MAX_CARD_CENTS,
+  type AgentcardRailOptions,
+  type CardholderProfile,
+} from './agentcard/agentcard-rail.js';
+
+export { WebhookEventStore } from './agentcard/event-store.js';
+export { verifyAndIngest, verifySignature } from './agentcard/webhooks.js';
+
+export { BuyToolRail, LaneAUnavailableError, LANE_A_UNAVAILABLE } from './buy-tool/buy-tool-rail-stub.js';
