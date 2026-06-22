@@ -2,7 +2,7 @@
   "name": "@tomo/intent",
   "version": "0.0.0",
   "private": true,
-  "description": "Intent parser (intent-only) — STUB; implemented in phase-02.",
+  "description": "Intent parser (intent-only) — LLM via OpenRouter → schema-valid TaskIntent.",
   "type": "module",
   "exports": {
     ".": {
@@ -22,14 +22,17 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "dev": "tsup --watch",
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
-    "@tomo/core": "workspace:*"
+    "@tomo/core": "workspace:*",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

@@ -137,10 +137,16 @@ importers:
       '@tomo/core':
         specifier: workspace:*
         version: link:../core
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.0
+      '@vitest/coverage-v8':
+        specifier: ^3.0.0
+        version: 3.2.6(vitest@3.2.6(@types/node@22.20.0))
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(postcss@8.5.15)(typescript@5.9.3)
@@ -179,6 +185,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.0
+      '@vitest/coverage-v8':
+        specifier: ^3.0.0
+        version: 3.2.6(vitest@3.2.6(@types/node@22.20.0))
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(postcss@8.5.15)(typescript@5.9.3)
@@ -217,6 +226,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.0
+      '@vitest/coverage-v8':
+        specifier: ^3.0.0
+        version: 3.2.6(vitest@3.2.6(@types/node@22.20.0))
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(postcss@8.5.15)(typescript@5.9.3)
