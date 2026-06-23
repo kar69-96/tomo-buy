@@ -1,47 +1,43 @@
-# This is agentbuy!
+# Tomo-buy
 
-A little side project I made so that my agent is able to research and purchase items on the internet via CLI. Can use a credit card, or a USDC wallet for your agent.
+An agentic purchasing API: give it a product URL or a natural-language task, and it discovers the item, quotes it, and drives a real browser checkout, paying with a single-use virtual card.
 
-My favorite use case: connect to the Skyscanner and Omio API to find the best train and flight combinations, then monitor prices and buy when it reaches a good price. 
+## How it works
 
-btw: still a bit buggy and hits edge cases. 
+You hand it an intent; the **orchestrator/planner** turns it into a plan, runs the plan, and returns the best result (a quote, a receipt, or a human-approval gate). Depending on the task, it takes one of three paths:
 
-If interested, prompt Claude code to clone this repo and visit Claude.md for context!
-
-## New: per-domain caching
-
-After a checkout works, agentbuy stashes the *safe* state for that site — non-auth cookies + localStorage — and replays it the next time it visits, so it can skip re-login and re-discovery. Anything that looks like a session/auth/token cookie is filtered out by name and never cached.
-
-There are two ways it does this, depending on which browser tooling you're running (see below):
-
-- **Debugging tooling** → a simple file cache at `~/.tomo/cache/{domain}.json`. The agent extracts the safe cookies + localStorage with Playwright and re-injects them on the next run.
-- **Ideal tooling** → a [Browserbase Context](https://docs.browserbase.com/features/contexts): a server-side persistent browser profile, one per domain, that Browserbase reloads automatically. The cookies/localStorage never leave the cloud browser. (Wired up + stubbed — dormant unless you set the Browserbase keys.)
-
-## Ideal vs debugging tooling
-
-The repo runs out of the box on **debugging tooling** — the local, watch-it-happen stack I use while building and hitting edge cases. Every piece also has an **ideal** (production-grade) counterpart wired in behind an env switch; unset keys just fall back to the debugging default, so you can flip them on one at a time.
-
-| Role | Debugging tooling (default) | Ideal tooling |
+| Path | Trigger | What happens |
 |---|---|---|
-| Browser runtime | **local Chrome via Playwright** (`HEADLESS=false` to watch) | **[Browserbase](https://www.browserbase.com/)** managed stealth browsers |
-| Per-domain cache | **file cache** (`~/.tomo/cache/{domain}.json`) | **Browserbase Contexts** (server-side persistent profile) |
-| In-checkout browser agent | **OpenRouter** | **Gemini** (fast/cheap action-selection) |
-| Orchestrator / planner | **OpenRouter** (`gpt-4o-mini` class) | **Claude Opus** |
-| Funding | **[Agentcard](https://agentcard.to)** single-use cards | same |
-| Agent email + OTP | placeholder inbox | **[AgentMail](https://agentmail.to)** disposable inboxes |
-| Connected email | — | **[Composio](https://composio.dev)** (OTP + account detection) |
+| **API / MCP purchase** | `POST /api/query → /api/buy → /api/confirm` | Direct browser checkout from a URL + shipping you provide. No account needed. Guest checkout. |
+| **Headless purchase — agent identity** | `POST /api/run` (task) | The planner spins up the agent's *own* account (own email inbox, signup, login), then checks out. For anything where any account works. |
+| **Headless purchase — your account** | `POST /api/run` (task) | The planner logs in as *you* via a session token (or email OTP), then checks out. For loyalty accounts, existing carts, your personal flights/orders. |
 
-Flip a piece to its ideal counterpart with an env switch:
+The planner composes three capabilities — `discover` → `login` → `purchase` — and pauses at **approval gates** before anything irreversible: `create_account` (register a new agent account), `session_token` (log in as you), and `purchase_confirm` (full price breakdown before a card is issued and real money moves).
 
-```bash
-BROWSER_RUNTIME=browserbase   # + BROWSERBASE_API_KEY + BROWSERBASE_PROJECT_ID
-LLM_PROVIDER=gemini           # + GEMINI_API_KEY
-PLANNER_MODEL=anthropic/claude-opus-4-8
-COMPOSIO_API_KEY=...          # connected-email OTP
-AGENTMAIL_API_KEY=...         # agent-identity inboxes
-```
+## Core features
+
+**1. Email OTP, end to end.** Agent identities get disposable [AgentMail](https://agentmail.to) inboxes; the login executor polls for the verification email, extracts the code, and fills it. The user's own account is handled the same way by reading OTP from the connected inbox.
+
+**2. Per-domain caching.** After a successful checkout, safe cookies + localStorage are saved per domain (`~/.tomo/cache/{domain}.json`) and replayed on the next visit, so the agent skips re-login and re-discovery. Auth/session cookies are filtered out by name — they never touch the cache.
+
+**3. Single-use virtual cards.** Every purchase mints a fresh [Agentcard](https://agentcard.to) virtual card, sized to the order total (+ a tax/shipping buffer) and hard-capped at a ceiling you set. The PAN/CVV are injected straight into the page via Playwright CDP, never through the model or any log.
 
 ## Setup
+
+### Recommended tooling
+
+| Role | Recommended | Why |
+|---|---|---|
+| Orchestrator / planner agent | **Claude Opus** | Deepest reasoning for plan composition and identity strategy. |
+| Browser runtime | **[Browserbase](https://www.browserbase.com/) (stealth mode)** | Managed stealth browsers that survive bot detection at scale. |
+| In-checkout browser agent | **Gemini** | Fast, cheap action-selection on the page loop. |
+| Funding | **[Agentcard](https://agentcard.to)** | Single-use virtual cards, minted per purchase and capped at your ceiling. |
+| Agent email + OTP | **[AgentMail](https://agentmail.to)** | Disposable inboxes per agent identity for signup and OTP. |
+| Connected email | **[Composio](https://composio.dev)** | Read OTP and detect existing accounts on the user's own inbox. |
+
+> The repo ships with sensible local defaults — **OpenRouter** models + **local Playwright Chrome** — so it runs out of the box. Every row above is also wired in behind an env switch: set `BROWSER_RUNTIME=browserbase` (+ `BROWSERBASE_API_KEY`), `LLM_PROVIDER=gemini` (+ `GEMINI_API_KEY`), `COMPOSIO_API_KEY`, `AGENTMAIL_API_KEY`, or point `PLANNER_MODEL` at Claude Opus to move each piece to the production stack. Unset keys fall back to the local default, so you can adopt them one at a time.
+
+### Install & run
 
 ```bash
 pnpm install
@@ -67,6 +63,12 @@ npx -y agentcard@latest limit
 ```
 
 Then set `FUNDING=agentcard` in `.env`. See `.claude/skills/agentcard/SKILL.md` for details.
+
+### Optional
+
+- `AGENTMAIL_API_KEY` — agent-identity inboxes + email OTP (without it, identities use a placeholder email and skip OTP)
+- `COMPOSIO_API_KEY` — read OTP / detect accounts on the user's connected email
+- `HEADLESS=false` — watch the checkout in a visible Chrome window
 
 ---
 
