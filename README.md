@@ -1,6 +1,6 @@
 # Tomo-buy
 
-An agentic purchasing API: give it a product URL or a natural-language task, and it discovers the item, quotes it, and drives a real browser checkout — paying with a single-use virtual card minted per purchase. The LLM never sees a card number, password, or session token.
+An agentic purchasing API: give it a product URL or a natural-language task, and it discovers the item, quotes it, and drives a real browser checkout, paying with a single-use virtual card.
 
 ## How it works
 
