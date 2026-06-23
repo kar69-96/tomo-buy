@@ -207,9 +207,24 @@ whether to use a fresh **agent identity** or **your connected account**:
 
 ```
 1. POST /api/run { task: "buy https://store.example/p/123" }
-   -> The planner runs discover -> login -> purchase. It returns either a
-      completed result, or a pause:
-      { run_id, status: "awaiting_approval", gate: { type, details } }
+   -> The planner grounds the task against live web data (Exa + discovery) and
+      produces a high-detail execution `brief`, then runs discover -> login ->
+      purchase. It returns either a completed result, or a pause — both carry the
+      brief:
+      { run_id, status: "awaiting_approval", brief: { ... }, gate: { type, details } }
+
+   The brief is a structured plan for the execution agent. For
+   "book the earliest gowild pass tomorrow morning from DEN to SFO" it looks like:
+      {
+        objective:   "Book earliest morning GoWild standby DEN->SFO for 2026-06-24",
+        target:      { site, url, domain },          // grounded entry URL
+        login:       { required, type, notes },       // e.g. type: "email_otp"
+        parameters:  { origin, destination, date, time_window, fare_type },
+        constraints: ["pick earliest departure after ~5am", ...],
+        execution_steps: ["Navigate to GoWild booking", "Set DEN->SFO ...", ...],
+        resolve_live: ["exact flight number", "exact departure time"],  // resolved at run time, never invented
+        grounding:   { method: "exa+discovery", candidates: [...] }
+      }
 
 2. Handle the gate by type, then resume:
    - create_account : a fresh agent account will be registered on the site.

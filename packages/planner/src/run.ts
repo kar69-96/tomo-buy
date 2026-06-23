@@ -13,6 +13,7 @@ import {
   type GateType,
   type LoginStrategy,
   type ExecutionPlan,
+  type ExecutionBrief,
   type PlanStep,
   generateId,
   createRun,
@@ -82,6 +83,8 @@ export interface RunOutcome {
   run_id: string;
   status: Run["status"];
   gate?: RunGate;
+  /** High-detail execution brief the planner produced for this run. */
+  brief?: ExecutionBrief;
   result?: Record<string, unknown>;
   error?: { code: string; message: string };
 }
@@ -184,6 +187,7 @@ async function applyApproval(
 
 async function advance(run: Run): Promise<RunOutcome> {
   const plan = run.plan!;
+  const brief = plan.brief;
   const ctx = readContext(run);
   let cursor = run.cursor;
 
@@ -199,7 +203,7 @@ async function advance(run: Run): Promise<RunOutcome> {
           context: ctx,
           updated_at: nowIso(),
         });
-        return { run_id: run.run_id, status: "awaiting_approval", gate };
+        return { run_id: run.run_id, status: "awaiting_approval", gate, brief };
       }
       cursor += 1;
     }
@@ -207,7 +211,7 @@ async function advance(run: Run): Promise<RunOutcome> {
     const message = err instanceof Error ? err.message : String(err);
     const error = { code: "PLAN_FAILED", message };
     await updateRun(run.run_id, { status: "failed", error, context: ctx, updated_at: nowIso() });
-    return { run_id: run.run_id, status: "failed", error };
+    return { run_id: run.run_id, status: "failed", brief, error };
   }
 
   const result = { ...ctx.discovery, receipt: ctx.receipt, parked: ctx.purchase?.parked };
@@ -218,7 +222,7 @@ async function advance(run: Run): Promise<RunOutcome> {
     result,
     updated_at: nowIso(),
   });
-  return { run_id: run.run_id, status: "completed", result };
+  return { run_id: run.run_id, status: "completed", result, brief };
 }
 
 /** Execute one step. Returns a gate to pause on, or undefined to continue. */

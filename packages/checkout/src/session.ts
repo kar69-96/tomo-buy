@@ -1,27 +1,35 @@
-// ---- Local Playwright browser session lifecycle ----
+// ---- Browser session lifecycle ----
 //
-// Replaces Browserbase cloud sessions with a local Chrome driven by Playwright.
-// Prefers the system Google Chrome channel; falls back to Playwright's bundled
-// Chromium. Set HEADLESS=false to watch the checkout happen in a real window.
+// Two runtimes behind one BrowserSession contract (selected by getBrowserRuntime):
+//   - "local" (default): local Chrome driven by Playwright. Prefers the system
+//     Google Chrome channel; falls back to Playwright's bundled Chromium. Set
+//     HEADLESS=false to watch the checkout happen in a real window.
+//   - "browserbase": managed stealth Chrome in the cloud (the production-
+//     recommended runtime). See browserbase-session.ts.
+// The checkout loop never branches on the runtime — it only touches `page`.
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { getBrowserRuntime, type BrowserRuntime } from "@tomo/core";
 
 export interface SessionOptions {
   /** Launch with a visible window. Overrides the HEADLESS env var when set. */
   headless?: boolean;
-  /** Reserved for parity with the old cloud API (no-op locally). */
+  /** Request advanced stealth (Browserbase runtime; no-op locally). */
   stealth?: boolean;
+  /** Route through residential proxies (Browserbase runtime; no-op locally). */
   proxies?: boolean;
   logSession?: boolean;
 }
 
-/** A live local browser session. Carries the page the checkout loop drives. */
+/** A live browser session. Carries the page the checkout loop drives. */
 export interface BrowserSession {
   id: string;
   replayUrl: string;
   browser: Browser;
   context: BrowserContext;
   page: Page;
+  /** Which runtime backs this session (defaults to "local"). */
+  runtime?: BrowserRuntime;
 }
 
 // Back-compat alias for call sites that referenced the old name.
@@ -37,6 +45,13 @@ function resolveHeadless(options?: SessionOptions): boolean {
 export async function createSession(
   options?: SessionOptions,
 ): Promise<BrowserSession> {
+  if (getBrowserRuntime() === "browserbase") {
+    // Imported lazily so the local runtime never loads the cloud adapter.
+    const { createBrowserbaseSession } = await import("./browserbase-session.js");
+    const session = await createBrowserbaseSession(options);
+    return { ...session, runtime: "browserbase" };
+  }
+
   const headless = resolveHeadless(options);
 
   let browser: Browser;
@@ -63,7 +78,7 @@ export async function createSession(
   sessionCounter += 1;
   const id = `local_${process.pid}_${sessionCounter}`;
 
-  return { id, replayUrl: "", browser, context, page };
+  return { id, replayUrl: "", browser, context, page, runtime: "local" };
 }
 
 export async function destroySession(
@@ -79,6 +94,10 @@ export async function destroySession(
     await session.browser.close();
   } catch {
     // never throw from cleanup
+  }
+  if (session.runtime === "browserbase") {
+    const { releaseBrowserbaseSession } = await import("./browserbase-session.js");
+    await releaseBrowserbaseSession(session.id);
   }
 }
 

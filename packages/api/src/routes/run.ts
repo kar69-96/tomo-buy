@@ -10,6 +10,7 @@ function formatOutcome(outcome: RunOutcome) {
   return {
     run_id: outcome.run_id,
     status: outcome.status,
+    ...(outcome.brief ? { brief: outcome.brief } : {}),
     ...(outcome.gate ? { gate: outcome.gate } : {}),
     ...(outcome.result ? { result: outcome.result } : {}),
     ...(outcome.error ? { error: outcome.error } : {}),

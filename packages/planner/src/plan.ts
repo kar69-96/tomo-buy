@@ -6,6 +6,7 @@
 import type { ExecutionPlan, PlanStep } from "@tomo/core";
 import { completeJson, getOpenRouterKey } from "@tomo/identity";
 import { describeCapabilities } from "./capabilities.js";
+import { buildBrief, fallbackBrief } from "./brief.js";
 
 const URL_RE = /\bhttps?:\/\/[^\s"'<>]+/i;
 
@@ -55,7 +56,8 @@ function safeDomain(url: string): string {
 
 const VALID = new Set(["discover", "login", "purchase"]);
 
-export async function plan(task: string): Promise<ExecutionPlan> {
+/** Plan the ordered capability steps (no brief). */
+async function planSteps(task: string): Promise<ExecutionPlan> {
   if (!getOpenRouterKey()) return fallbackPlan(task);
 
   try {
@@ -72,6 +74,18 @@ export async function plan(task: string): Promise<ExecutionPlan> {
   } catch {
     return fallbackPlan(task);
   }
+}
+
+/**
+ * Plan a task: produce the ordered capability steps AND a high-detail execution
+ * brief for the downstream execution agent. The two are computed in parallel.
+ */
+export async function plan(task: string): Promise<ExecutionPlan> {
+  const [base, brief] = await Promise.all([
+    planSteps(task),
+    buildBrief(task).catch(() => fallbackBrief(task)),
+  ]);
+  return { ...base, brief };
 }
 
 function normalizeStep(

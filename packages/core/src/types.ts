@@ -265,6 +265,69 @@ export interface PlanStep {
 export interface ExecutionPlan {
   task: string;
   steps: PlanStep[];
+  /** High-detail, structured brief handed to the execution agent (no secrets). */
+  brief?: ExecutionBrief;
+}
+
+// ---- Execution Brief (high-detail planner output) ----
+
+/** How the executor is expected to get past the login gate (informational). */
+export type BriefLoginType =
+  | "email_otp"
+  | "password"
+  | "session"
+  | "agent"
+  | "none"
+  | "unknown";
+
+export interface BriefTarget {
+  /** Human-readable site/service name, e.g. "Frontier Airlines GoWild". */
+  site: string;
+  /** Best resolved entry URL for the task (grounded when possible). */
+  url: string;
+  /** Bare hostname, e.g. "flyfrontier.com". */
+  domain: string;
+}
+
+export interface BriefLogin {
+  required: boolean;
+  type: BriefLoginType;
+  notes?: string;
+}
+
+/** A grounded option surfaced by Exa/discovery during planning. */
+export interface BriefCandidate {
+  name: string;
+  url: string;
+  price?: string;
+}
+
+export interface BriefGrounding {
+  /** "exa+discovery" | "url-fetch" | "llm-only" | "fallback". */
+  method: string;
+  candidates?: BriefCandidate[];
+}
+
+/**
+ * A high-detail, structured brief the planner hands to the execution agent.
+ * Carries only task intent + grounded facts — NEVER any secret. Facts that can
+ * only be known at run time (exact flight number/time, live availability) are
+ * listed in `resolve_live` as instructions, never invented at plan time.
+ */
+export interface ExecutionBrief {
+  /** One-line restatement of the resolved goal. */
+  objective: string;
+  target: BriefTarget;
+  login: BriefLogin;
+  /** Domain-specific structured parameters parsed from the task. */
+  parameters: Record<string, string>;
+  /** Hard requirements/preferences the executor must honor. */
+  constraints: string[];
+  /** Ordered, concrete instructions for the headless execution agent. */
+  execution_steps: string[];
+  /** Facts the executor must resolve live (not invented at plan time). */
+  resolve_live: string[];
+  grounding?: BriefGrounding;
 }
 
 export interface Run {

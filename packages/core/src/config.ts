@@ -56,6 +56,59 @@ export function getComposioKey(): string | null {
   return process.env.COMPOSIO_API_KEY || null;
 }
 
+// ---- Browser runtime ----
+
+export type BrowserRuntime = "local" | "browserbase";
+
+/**
+ * Where checkout/discovery browsers run:
+ * - "local" (default): local Playwright Chrome — runs out of the box.
+ * - "browserbase": managed stealth browsers (the production-recommended runtime).
+ *   Falls back to "local" unless BROWSERBASE_API_KEY is also set.
+ */
+export function getBrowserRuntime(): BrowserRuntime {
+  const wantsBrowserbase = process.env.BROWSER_RUNTIME === "browserbase";
+  return wantsBrowserbase && getBrowserbaseKey() ? "browserbase" : "local";
+}
+
+/** Browserbase API key (optional; the runtime is stubbed until wired). */
+export function getBrowserbaseKey(): string | null {
+  return process.env.BROWSERBASE_API_KEY || null;
+}
+
+/** Browserbase project id (required by the session-create API). */
+export function getBrowserbaseProjectId(): string | null {
+  return process.env.BROWSERBASE_PROJECT_ID || null;
+}
+
+// ---- In-checkout LLM provider ----
+
+export type LlmProvider = "openrouter" | "gemini";
+
+/**
+ * Which provider backs the in-checkout browser agent (action selection):
+ * - "openrouter" (default): OpenRouter — runs out of the box.
+ * - "gemini": Google Gemini (the production-recommended in-checkout agent).
+ *   Falls back to "openrouter" unless GEMINI_API_KEY is also set.
+ *
+ * Discovery/extraction and the planner stay on OpenRouter regardless; this
+ * only routes the page-action loop. Card data NEVER reaches either provider.
+ */
+export function getLlmProvider(): LlmProvider {
+  const wantsGemini = process.env.LLM_PROVIDER === "gemini";
+  return wantsGemini && getGeminiKey() ? "gemini" : "openrouter";
+}
+
+/** Gemini API key (optional; the client is stubbed until wired). */
+export function getGeminiKey(): string | null {
+  return process.env.GEMINI_API_KEY || null;
+}
+
+/** Model id for the Gemini in-checkout agent. */
+export function getGeminiModel(): string {
+  return process.env.GEMINI_MODEL || "gemini-2.0-flash";
+}
+
 /** Model for the planning agent; defaults to the discovery/intent model. */
 export function getPlannerModel(): string {
   return (

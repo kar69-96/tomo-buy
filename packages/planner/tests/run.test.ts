@@ -162,16 +162,17 @@ describe("Frontier Go Wild flight booking — the booking logic never silently s
     expect(resolveStrategyMock).not.toHaveBeenCalled();
   });
 
-  it("a concrete flight on the connected Go Wild account drives login→payment and PARKS without spending", async () => {
-    // The real task: a specific Frontier flight URL, paid on the user's own
-    // (connected) Frontier account that holds the Go Wild pass. We run the actual
-    // pipeline — discover → login → purchase — but in no-spend oversight mode so the
-    // browser stops at the payment page. No card is issued; no reservation is made.
+  it("auto-logs-in via emailed OTP on the connected account — no session-token gate, only purchase confirm", async () => {
+    // This mirrors what the REAL resolver returns for a "my go-wild pass" flight
+    // task when the user's email is connected (verified live against Composio +
+    // OpenRouter): { strategy: "connected_otp", email: <user>, domain }. A
+    // connected_otp login needs NO human gate — the code is read from the user's
+    // inbox automatically. The only human gate left is the purchase confirmation.
     resolveStrategyMock.mockResolvedValue({
-      strategy: "connected_session",
-      email: "user@gmail.com",
+      strategy: "connected_otp",
+      email: "kreddy.2027@gmail.com",
       domain: "flyfrontier.com",
-      needs_gate: "session_token",
+      // no needs_gate: OTP login is fully automated, nothing for the user to provide
     });
     confirmMock.mockClear();
     confirmMock.mockResolvedValueOnce({
@@ -181,25 +182,18 @@ describe("Frontier Go Wild flight booking — the booking logic never silently s
 
     process.env.DRY_RUN_NO_SPEND = "1";
     try {
-      // 1. Start → resolves to the user's connected Frontier account → needs a token.
+      // Start → discover → OTP login (automatic, no gate) → first stop is purchase.
       const start = await startRun(
         "book the first flight tomorrow at https://www.flyfrontier.com/book/flight using my go-wild pass",
       );
-      expect(start.gate?.type).toBe("session_token");
-      expect(start.gate?.details.domain).toBe("flyfrontier.com");
-      // No spend has happened just to resolve login.
+      // Crucially: NO session_token gate. Login resolved straight to OTP, so the
+      // first (and only) human gate is the purchase confirmation.
+      expect(start.gate?.type).toBe("purchase_confirm");
+      expect(start.gate?.details.quote_total).toBe("102.00");
+      expect(start.gate?.details.estimated_max_charge).toBeDefined();
       expect(confirmMock).not.toHaveBeenCalled();
 
-      // 2. Provide the session token → next stop is the purchase confirmation, with
-      //    an honest price breakdown and a funding ceiling. Still nothing spent.
-      const afterToken = await resumeRun(start.run_id, { session_token: "frontier.session.jwt" });
-      expect(afterToken.gate?.type).toBe("purchase_confirm");
-      expect(afterToken.gate?.details.quote_total).toBe("102.00");
-      expect(afterToken.gate?.details.estimated_max_charge).toBeDefined();
-      expect(confirmMock).not.toHaveBeenCalled();
-
-      // 3. Approve the purchase → the real browser runs through to the payment page
-      //    and STOPS. The run surfaces the parked checkpoint, not a receipt.
+      // Approve the purchase → the real browser runs to the payment page and STOPS.
       const done = await resumeRun(start.run_id, { approved: true });
       expect(done.status).toBe("completed");
       expect(confirmMock).toHaveBeenCalledTimes(1);
@@ -211,13 +205,16 @@ describe("Frontier Go Wild flight booking — the booking logic never silently s
       });
       expect(done.result?.receipt).toBeUndefined();
 
-      // And it logged in as the user (their Go Wild account), carrying the vaulted
-      // session token — never a plaintext secret in the persisted run.
+      // The login plan handed to checkout is OTP-based: type the user's email, read
+      // the code from their connected inbox. No password, no session token, no
+      // secret in the persisted run.
       const loginPlan = confirmMock.mock.calls.at(-1)?.[0]?.loginPlan as
-        | { strategy: string; sessionCookies?: Array<{ value: string }> }
+        | { strategy: string; email?: string; password?: string; sessionCookies?: unknown }
         | undefined;
-      expect(loginPlan?.strategy).toBe("connected_session");
-      expect(loginPlan?.sessionCookies?.[0]?.value).toBe("USER-SESSION-TOKEN");
+      expect(loginPlan?.strategy).toBe("connected_otp");
+      expect(loginPlan?.email).toBe("kreddy.2027@gmail.com");
+      expect(loginPlan?.password).toBeUndefined();
+      expect(loginPlan?.sessionCookies).toBeUndefined();
     } finally {
       delete process.env.DRY_RUN_NO_SPEND;
     }

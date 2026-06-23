@@ -35,7 +35,7 @@ The planner composes three capabilities — `discover` → `login` → `purchase
 | Agent email + OTP | **[AgentMail](https://agentmail.to)** | Disposable inboxes per agent identity for signup and OTP. |
 | Connected email | **[Composio](https://composio.dev)** | Read OTP and detect existing accounts on the user's own inbox. |
 
-> The repo currently has cheaper local defaults: **OpenRouter** models + **local Playwright Chrome**, so it runs out of the box. The stack above is tested to perform far better. 
+> The repo ships with sensible local defaults — **OpenRouter** models + **local Playwright Chrome** — so it runs out of the box. Every row above is also wired in behind an env switch: set `BROWSER_RUNTIME=browserbase` (+ `BROWSERBASE_API_KEY`), `LLM_PROVIDER=gemini` (+ `GEMINI_API_KEY`), `COMPOSIO_API_KEY`, `AGENTMAIL_API_KEY`, or point `PLANNER_MODEL` at Claude Opus to move each piece to the production stack. Unset keys fall back to the local default, so you can adopt them one at a time.
 
 ### Install & run
 

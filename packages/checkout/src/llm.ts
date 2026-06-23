@@ -1,10 +1,16 @@
 /**
  * OpenRouter chat client (fetch-based, no SDK dependency).
  *
- * Replaces the Gemini / Stagehand-internal LLM. Every model call in checkout and
- * discovery goes through here. Card numbers MUST NEVER be passed to these
- * functions — only sanitized page text, instructions, and %var% placeholders.
+ * Every model call in checkout and discovery goes through `complete()`. The
+ * in-checkout browser agent can be routed to Google Gemini (the production-
+ * recommended provider) by setting LLM_PROVIDER=gemini + GEMINI_API_KEY; the
+ * default is OpenRouter so the repo runs out of the box. Card numbers MUST
+ * NEVER be passed to these functions — only sanitized page text, instructions,
+ * and %var% placeholders.
  */
+
+import { getLlmProvider } from "@tomo/core";
+import { geminiComplete } from "./gemini.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -49,6 +55,11 @@ export async function complete(
   messages: ChatMessage[],
   options: CompleteOptions = {},
 ): Promise<string> {
+  // Route the page-action loop to Gemini when configured; otherwise OpenRouter.
+  if (getLlmProvider() === "gemini") {
+    return geminiComplete(messages, options);
+  }
+
   const apiKey = getOpenRouterKey();
   const model = options.model ?? getAgentModel();
 
