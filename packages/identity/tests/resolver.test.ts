@@ -49,6 +49,8 @@ describe("wantsGuest", () => {
     expect(wantsGuest("check out as guest please")).toBe(true);
     expect(wantsGuest("use guest checkout")).toBe(true);
     expect(wantsGuest("buy it without an account")).toBe(true);
+    expect(wantsGuest("purchase this without creating an account")).toBe(true);
+    expect(wantsGuest("buy it without making an account")).toBe(true);
     expect(wantsGuest("don't sign in, just buy it")).toBe(true);
   });
   it("does not fire on normal purchase tasks", () => {

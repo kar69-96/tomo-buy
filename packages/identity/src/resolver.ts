@@ -46,7 +46,9 @@ interface LlmDecision {
  * When present, the resolver short-circuits to the `guest` strategy with no gate.
  */
 export function wantsGuest(task: string): boolean {
-  return /\bas a guest\b|\bas guest\b|\bguest checkout\b|\bwithout (an )?account\b|\bwithout (logging|signing) in\b|\bdo(n'?t| not) (log|sign) in\b/i.test(
+  // `without ... account` allows an intervening verb/article ("without creating
+  // an account", "without making an account") — not just "without an account".
+  return /\bas a guest\b|\bas guest\b|\bguest checkout\b|\bwithout\s+(?:\w+\s+){0,3}account\b|\bwithout (logging|signing) in\b|\bdo(n'?t| not) (log|sign) in\b/i.test(
     task,
   );
 }

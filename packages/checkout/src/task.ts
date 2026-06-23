@@ -134,9 +134,37 @@ function isBriefDrivenTask(input: CheckoutInput): boolean {
  * handlers don't model. Hands the executor the objective, grounded parameters,
  * the full ordered plan, and a hard stop before any irreversible payment.
  */
+/**
+ * True for a login plan that means "act as a signed-in user" (not guest). Covers
+ * the user's own account AND an agent identity — used to fire the scripted login
+ * opportunistically whenever a login form is actually on screen.
+ */
+function wantsAccountLogin(plan: LoginPlan | undefined): boolean {
+  return (
+    !!plan &&
+    (plan.strategy === "connected_otp" ||
+      plan.strategy === "connected_session" ||
+      plan.strategy === "agent")
+  );
+}
+
+/**
+ * True only for the USER's own connected account, where signing in early unlocks
+ * member pricing/benefits — so we proactively prompt opening the login link. An
+ * agent identity logs in reactively (only when a gate blocks progress), so it is
+ * deliberately excluded here: don't prompt a login the task doesn't need.
+ */
+function wantsProactiveLogin(plan: LoginPlan | undefined): boolean {
+  return (
+    !!plan &&
+    (plan.strategy === "connected_otp" || plan.strategy === "connected_session")
+  );
+}
+
 function buildBriefInstruction(
   brief: ExecutionBrief,
   dryRun: boolean | undefined,
+  loginPlan?: LoginPlan,
 ): string {
   const params = Object.entries(brief.parameters ?? {})
     .map(([k, v]) => `${k}=${v}`)
@@ -153,18 +181,30 @@ function buildBriefInstruction(
   const stop = dryRun
     ? "Reach the payment page (where a credit-card number is requested), then STOP — do NOT enter card details or place/confirm the order."
     : "Stop just before placing/confirming the order for human review.";
+  // When the task runs on the user's own account, sign in proactively (the email
+  // + any one-time code are filled for you out-of-band — you only need to OPEN the
+  // login page). Otherwise keep the guest-only default.
+  const loginLine = wantsProactiveLogin(loginPlan)
+    ? "ACCOUNT: this task runs on the user's own account. If a \"Log in\"/\"Sign in\" link is plainly visible (usually top-right), click it ONCE to open the login form — it is then completed automatically for you (do not type the email/password yourself, and do not retry). Do NOT let login block progress: completing the task is the priority — if login isn't readily available or doesn't complete, just continue."
+    : "";
+  const signInRule = wantsAccountLogin(loginPlan)
+    ? "Sign in only via the existing-account \"Log in\"/\"Sign in\" flow; never CREATE a new account."
+    : "Never create an account or sign in unless the page blocks all further progress without it.";
   return [
     `Objective: ${brief.objective}`,
     params ? `Parameters to use: ${params}.` : "",
+    loginLine,
     "Do the NEXT step in this ordered plan that applies to the current page (skip steps already done):",
     steps,
     constraints,
     live,
     "How to act on this page:",
     "- FIRST, if any cookie banner, promo, newsletter, or modal overlay covers the page, close it (its ×, \"No thanks\", \"Continue\", or Escape) before anything else.",
-    "- Complete EVERY field the current step needs before advancing. For an autocomplete/typeahead field, type the value then pick the suggestion that matches the code/name exactly (e.g. the airport whose code is in parentheses). For a date, open the picker and navigate to the correct month/year, then click the day.",
-    "- After the current section is complete, click the control that ADVANCES the page (Search, Find Flights, Continue, Next, Select). Never leave a finished form unsubmitted.",
-    `IMPORTANT: ${stop} Never create an account or sign in unless the page blocks all further progress without it.`,
+    "- On a search or configuration form, set any OPTION TOGGLES/selectors to match the Parameters BEFORE filling text fields or submitting — these reshape the results and are easy to miss (e.g. a mode/type switch, a variant or category selector, quantity/count steppers). Pick the option the Parameters call for, NOT the default, and verify each toggle matches before submitting.",
+    "- Complete EVERY field the current step needs before advancing. For an autocomplete/typeahead field, type the value then pick the suggestion that matches the requested name or code exactly (e.g. the entry whose code/identifier in parentheses matches). For a date, open the picker and navigate to the correct month/year, then click the day.",
+    "- After the current section is complete, click the control that ADVANCES the page (Search, Continue, Next, Select, Proceed). Never leave a finished form unsubmitted.",
+    "- On a results/options page, scroll to the individual selectable options and click a concrete PRICE or option button to choose one; a column header or a price shown as a placeholder (e.g. \"--\") is not selectable. If every option shows a placeholder price, the form's options/filters are wrong — go back and fix them.",
+    `IMPORTANT: ${stop} ${signInRule}`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -375,6 +415,10 @@ interface LoopState {
   cardFilled: boolean;
   billingFilled: boolean;
   selectionsApplied: boolean;
+  /** True once a connected/agent account login has been driven successfully. */
+  loggedIn: boolean;
+  /** How many times we've fired the scripted account login (capped). */
+  loginAttempts: number;
   llmCalls: number;
   pagesVisited: number;
   lastUrl: string;
@@ -440,7 +484,7 @@ function buildPageInstruction(
     const stallHint = isStalled
       ? "The previous action didn't advance the page — try a different control (a different button, a dropdown option, or scroll to reveal it). "
       : "";
-    return `[${domain}] ${stallHint}${buildBriefInstruction(input.brief, dryRun)}`;
+    return `[${domain}] ${stallHint}${buildBriefInstruction(input.brief, dryRun, input.loginPlan)}`;
   }
 
   // Context prefix for the LLM
@@ -725,6 +769,8 @@ export async function runCheckout(
       cardFilled: false,
       billingFilled: false,
       selectionsApplied: false,
+      loggedIn: false,
+      loginAttempts: 0,
       llmCalls: 0,
       pagesVisited: 0,
       lastUrl: page.url(),
@@ -744,6 +790,56 @@ export async function runCheckout(
       //     framework-driven modals whose backdrops otherwise intercept every click.
       await scriptedDismissPopups(page);
       try { await page.keyboard.press("Escape"); } catch { /* best-effort */ }
+
+      // 9b-login. Opportunistic connected/agent account login. A visible password
+      // field (or a sign-in form inside a dialog) means a login form is on screen —
+      // even a MODAL login that never changed the URL or page-type. Driving it here
+      // (not only on a detected login-gate page) is what lets "log in as the user"
+      // actually happen on sites whose login is a header dropdown/modal. Capped so a
+      // login that can't complete (e.g. site wants a password we don't hold) never
+      // loops — the task continues as the priority.
+      if (
+        wantsAccountLogin(input.loginPlan) &&
+        !state.loggedIn &&
+        state.loginAttempts < 2
+      ) {
+        const hasLoginForm = await page
+          .evaluate(() => {
+            const visible = (el: Element | null): boolean =>
+              !!el && (el as HTMLElement).offsetParent !== null;
+            const pw = document.querySelector('input[type="password"]');
+            if (visible(pw)) return true;
+            // Email field + a visible "log in/sign in" submit inside a dialog/modal.
+            const inDialog = document.querySelector(
+              '[role="dialog"] input[type="email"], [aria-modal="true"] input[type="email"], [class*="login" i] input[type="email"], [class*="signin" i] input[type="email"]',
+            );
+            if (!visible(inDialog)) return false;
+            const btns = Array.from(
+              document.querySelectorAll('button, [role="button"], input[type="submit"]'),
+            );
+            return btns.some((b) => {
+              if (!visible(b)) return false;
+              const t = `${(b.textContent || "")} ${(b as HTMLInputElement).value || ""}`.toLowerCase();
+              return /\b(log ?in|sign ?in)\b/.test(t);
+            });
+          })
+          .catch(() => false);
+        if (hasLoginForm) {
+          state.loginAttempts++;
+          try {
+            const r = await executeLogin(page, session.context, input.loginPlan);
+            if (r.advanced) {
+              state.loggedIn = true;
+              console.log(`  [login] connected-account login: ${r.note ?? input.loginPlan?.strategy}`);
+            } else {
+              console.log(`  [login] attempt ${state.loginAttempts} did not complete (${r.note ?? "no progress"}); continuing task`);
+            }
+          } catch (err) {
+            console.log(`  [login error] ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
+          }
+          await page.waitForTimeout(2000);
+        }
+      }
 
       // 9c. Detect page type
       let pageType: PageType;
@@ -1398,15 +1494,14 @@ export async function runCheckout(
                 const v = (el.value || "").trim();
                 if (v) { filled++; len += v.length; }
               }
-              // Fold in scroll position + interactive-element count so that
-              // scrolling a long page (to reveal flight/fare options) and DOM
-              // changes (new options rendering) both count as real progress,
-              // not a stall.
+              // Fold in interactive-element count so DOM changes (new options
+              // rendering, a drawer opening) count as real progress. Deliberately
+              // NOT scroll position: a stall must still accrue while we scroll-nudge
+              // a stuck page, both so we eventually give up and so the nudge fires.
               const interactive = document.querySelectorAll(
                 'a, button, input, select, textarea, [role="button"], [role="option"]',
               ).length;
-              const scrollY = Math.round(window.scrollY / 200);
-              return `${filled}:${len}:${interactive}:${scrollY}`;
+              return `${filled}:${len}:${interactive}`;
             })
             .catch(() => "")
         : "";
@@ -1426,7 +1521,7 @@ export async function runCheckout(
 
       // Break out if completely stuck on same page. Brief-driven tasks get a larger
       // budget (more distinct pages, every page is an LLM step).
-      const stuckLimit = briefDriven ? 7 : 5;
+      const stuckLimit = briefDriven ? 9 : 5;
       if (state.stallCount >= stuckLimit) {
         console.log(`  [stuck] ${state.stallCount} stalls on ${pageType} — giving up`);
         break;
@@ -1484,6 +1579,24 @@ export async function runCheckout(
         const isStalled = state.stallCount >= 2;
         const instruction = buildPageInstruction(pageType, input, state, isStalled);
 
+        // Scroll nudge: a form-flow page that won't advance is usually one where the
+        // option to act on (a selectable row, a price, a Continue button) is below
+        // the fold and the model won't scroll on its own. Deterministically cycle the
+        // viewport down the page each stall so the next screenshot reveals new
+        // content; wrap back to the top after reaching the bottom. Generic — no
+        // site-specific selectors.
+        if (briefDriven && isStalled) {
+          await page
+            .evaluate(() => {
+              const atBottom =
+                window.scrollY + window.innerHeight >= document.body.scrollHeight - 60;
+              if (atBottom) window.scrollTo({ top: 0 });
+              else window.scrollBy({ top: Math.round(window.innerHeight * 0.7) });
+            })
+            .catch(() => {});
+          await page.waitForTimeout(500);
+        }
+
         console.log(`  [llm fallback ${state.llmCalls + 1}/${maxLlm}${isStalled ? " STALLED" : ""}] ${instruction.slice(0, 100)}...`);
         tracer?.record({
           pageIndex: pageIdx,
@@ -1505,7 +1618,7 @@ export async function runCheckout(
           await playwrightAct(page, instruction, {
             variables: stagehandVars,
             iterative: true,
-            // Form-flow pages (a flight/booking search form) need more in-page
+            // Form-flow pages (a multi-field search/booking form) need more in-page
             // rounds to fill several widgets (autocompletes, date picker, steppers)
             // and then submit, before the outer loop re-detects the page.
             maxSteps: briefDriven ? 10 : undefined,
@@ -1626,7 +1739,7 @@ export async function runCheckout(
     }
 
     // 11. Price verification — only for a concrete product with a known price.
-    // A form_flow (flight/booking) has no single fixed product price to compare,
+    // A form_flow (a multi-step booking/reservation) has no single fixed product price to compare,
     // and a no-spend run legitimately ends without a final total, so a "$34 vs
     // $0.00" mismatch here is noise, not a failure.
     if (finalTotal && order.payment.price && !briefDriven) {

@@ -128,12 +128,12 @@ Return STRICT JSON: {"steps":[{"action":"click|fill|select|scroll","ref":<number
 Rules:
 - The screenshot may have SOLID BLACK BOXES over some fields. These are intentionally redacted sensitive fields (card number, personal info) — they are NOT errors or missing content. Treat a black box as a normal, already-handled field; never try to "fix" or re-fill it.
 - The element list is the source of truth for actions: always act by "ref" number, even for an element you can only see in the screenshot.
-- The screenshot shows only the CURRENT viewport. If the option/button you need (a flight to select, a fare price, a Continue button) is not visible, the page likely continues below — use {"action":"scroll","value":"down"} to reveal more, then act on what appears. Scroll is also how you reach a primary action button at the bottom of a long form.
+- The screenshot shows only the CURRENT viewport. If the option/button you need (an option to select, a price, a Continue button) is not visible, the page likely continues below — use {"action":"scroll","value":"down"} to reveal more, then act on what appears. Scroll is also how you reach a primary action button at the bottom of a long form.
 - If a modal, dialog, cookie banner, or promo overlay is blocking the page, close it FIRST (click its ×/close/"no thanks" control) before anything else.
 - For PERSONAL form fields (name, email, address, phone), prefer "var" referencing a provided variable name — never invent personal data.
 - For NON-personal inputs whose value the instruction specifies (a place/location, a date, a quantity, a search term), use "value" with that literal.
 - After filling an autocomplete/search field, the matching suggestion is accepted automatically — you do NOT need a separate step to click it.
-- When choosing among priced options (flights, fares, tiers) and the instruction doesn't pin one, pick the lowest-priced option that satisfies the stated requirements.
+- When choosing among priced options (search results, plans, tiers, variants) and the instruction doesn't pin one, pick the lowest-priced option that satisfies the stated requirements.
 - Act only on elements in the list, by ref number. Pick the few highest-impact steps toward the instruction; don't try to complete everything at once.
 - If you cannot make progress because needed content is off-screen, return a single scroll step rather than {"steps":[]}.
 - If nothing applies (or you're waiting for the page to update), return {"steps":[]}.`;
