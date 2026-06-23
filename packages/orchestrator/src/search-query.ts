@@ -7,9 +7,9 @@ import {
   type SearchQueryResponse,
   type SearchProductResult,
   type ProductOption,
-  BloonError,
+  TomoError,
   ErrorCodes,
-} from "@bloon/core";
+} from "@tomo/core";
 import {
   parseSearchQuery,
   searchProducts,
@@ -17,8 +17,8 @@ import {
   fetchShopifyOptions,
   classifyUrl,
   type ExaSearchResult,
-} from "@bloon/crawling";
-import { resolveVariantPricesViaBrowser } from "@bloon/checkout";
+} from "@tomo/crawling";
+import { resolveVariantPricesViaBrowser } from "@tomo/checkout";
 import { buildRequiredFields } from "./query.js";
 
 export interface SearchQueryInput {
@@ -101,7 +101,7 @@ export async function searchQuery(
   const rawQuery = input.query.trim();
 
   if (rawQuery.length < 2) {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.MISSING_FIELD,
       "Search query must be at least 2 characters",
     );
@@ -111,7 +111,7 @@ export async function searchQuery(
   const parsed = parseSearchQuery(rawQuery);
 
   if (parsed.cleanedTerms.length < 2) {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.MISSING_FIELD,
       "Search query must contain meaningful search terms",
     );
@@ -128,19 +128,19 @@ export async function searchQuery(
     const message = err instanceof Error ? err.message : String(err);
 
     if (message.includes("EXA_API_KEY not set")) {
-      throw new BloonError(
+      throw new TomoError(
         ErrorCodes.SEARCH_UNAVAILABLE,
         "Search service is not configured (EXA_API_KEY missing)",
       );
     }
     if (message.includes("429") || message.includes("rate limit")) {
-      throw new BloonError(
+      throw new TomoError(
         ErrorCodes.SEARCH_RATE_LIMITED,
         "Search rate limit exceeded, try again later",
       );
     }
 
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.SEARCH_UNAVAILABLE,
       `Search failed: ${message}`,
     );
@@ -152,7 +152,7 @@ export async function searchQuery(
   );
 
   if (filtered.length === 0) {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.SEARCH_NO_RESULTS,
       `No products found for "${rawQuery}"`,
     );

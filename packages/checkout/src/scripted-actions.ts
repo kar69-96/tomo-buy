@@ -2,7 +2,7 @@
  * Zero-LLM DOM manipulation functions for checkout automation.
  * All functions use page.evaluate() — no LLM calls.
  *
- * Classification signal constants live in @bloon/core/classification-signals
+ * Classification signal constants live in @tomo/core/classification-signals
  * and are shared with the HTTP engine's cheerio-based classifier.
  */
 import type { Page } from "playwright";
@@ -13,45 +13,113 @@ import {
   CARD_FIELD_MAP,
   EXPIRY_MONTH_SELECTORS,
   EXPIRY_YEAR_SELECTORS,
-} from "@bloon/core";
+} from "@tomo/core";
 
-export type { PageType } from "@bloon/core";
+export type { PageType } from "@tomo/core";
 
 // ---- Scripted popup dismissal ----
 
 export async function scriptedDismissPopups(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const CAPTCHA_RE = /captcha|recaptcha|hcaptcha|turnstile/i;
+    // Promo / email-capture wording that marks a marketing popup we can safely kill.
+    const PROMO_RE =
+      /subscribe|newsletter|% ?off|percent off|sign ?up|email|discount|\bdeals?\b|\boffers?\b|save \d|first order|unlock|win \$|enter to/i;
+    // Exact (trimmed) text on a close control.
+    const CLOSE_TEXTS = new Set([
+      "×", "✕", "✖", "x", "close", "no thanks", "no, thanks", "not now",
+      "maybe later", "dismiss", "decline", "reject", "continue shopping",
+    ]);
     const actions: string[] = [];
 
-    // Click close/dismiss buttons in dialogs
-    document.querySelectorAll(
-      '[role="dialog"] button[aria-label*="close" i], ' +
-      '[role="dialog"] button[aria-label*="dismiss" i], ' +
-      'button[aria-label*="close" i][class*="modal" i], ' +
-      '.modal button.close, .modal .btn-close'
-    ).forEach(btn => {
-      const dialog = btn.closest('[role="dialog"], .modal');
-      if (!CAPTCHA_RE.test(dialog?.textContent || "")) {
-        (btn as HTMLElement).click();
-        actions.push("clicked close button");
+    const isVisible = (el: Element): boolean => {
+      const s = getComputedStyle(el as HTMLElement);
+      if (s.display === "none" || s.visibility === "hidden" || parseFloat(s.opacity || "1") === 0)
+        return false;
+      const r = (el as HTMLElement).getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const hasPaymentField = (el: Element): boolean =>
+      !!el.querySelector(
+        'input[autocomplete*="cc-"], input[name*="card" i], input[id*="card" i], ' +
+        'iframe[src*="stripe" i], iframe[src*="paypal" i], iframe[title*="card" i]',
+      );
+
+    // 1. Click close/dismiss controls. aria-label="close|dismiss" is a popup closer by
+    //    convention; short close text (×, "no thanks") only counts inside a popup-ish box.
+    const POPUP_SEL =
+      '[role="dialog"], [aria-modal="true"], [class*="modal" i], [class*="popup" i], ' +
+      '[class*="overlay" i], [class*="drawer" i], [class*="klaviyo" i], [class*="kl-private" i], ' +
+      '[id*="privy" i], [id*="justuno" i], [id*="attentive" i], [class*="optin" i], [class*="newsletter" i]';
+    document.querySelectorAll('button, a, [role="button"]').forEach((el) => {
+      if (!isVisible(el)) return;
+      const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+      const text = (el.textContent || "").trim().toLowerCase();
+      const ariaClose = aria.includes("close") || aria.includes("dismiss");
+      const textClose = CLOSE_TEXTS.has(text);
+      if (!ariaClose && !textClose) return;
+      const box = el.closest(POPUP_SEL);
+      // text-only matches must be within a popup container to avoid stray clicks
+      if (!ariaClose && !box) return;
+      const scope = box || el;
+      if (CAPTCHA_RE.test(scope.textContent || "") || hasPaymentField(scope)) return;
+      // A real close "×" is small; skip if "x" is actually large content.
+      const r = (el as HTMLElement).getBoundingClientRect();
+      if (text === "x" && (r.width > 80 || r.height > 80)) return;
+      (el as HTMLElement).click();
+      actions.push(`clicked close (${aria || text})`);
+    });
+
+    // 2. Remove known third-party email-capture popups + their overlays (vendor-specific).
+    const vendorSel = [
+      '.klaviyo-form', '[class*="kl-private-reset"]', '[class*="kl_signup"]', '[id*="klaviyo"]',
+      '[id*="privy"]', '[class*="privy-"]',
+      '[id*="justuno"]', '[id^="ju_"]',
+      '[id*="attentive"]', '#attentive_overlay',
+      '[id*="mc_embed"]', '[id^="om-"]', '[class*="optinmonster" i]',
+      '[id*="sumo" i]', '[class*="sumome" i]',
+    ].join(", ");
+    document.querySelectorAll(vendorSel).forEach((e) => {
+      if (!CAPTCHA_RE.test(e.textContent || "") && !hasPaymentField(e)) {
+        e.remove();
+        actions.push("removed newsletter popup");
       }
     });
 
-    // Remove cookie/consent banners
+    // 3. Remove cookie/consent banners.
     document.querySelectorAll('[class*="cookie" i], [id*="cookie" i], [class*="consent" i]')
-      .forEach(e => { e.remove(); actions.push("removed cookie banner"); });
+      .forEach((e) => { e.remove(); actions.push("removed cookie banner"); });
 
-    // Remove fixed overlays
-    document.querySelectorAll('.overlay, .backdrop, [class*="overlay" i], [class*="backdrop" i]')
-      .forEach(e => {
-        if (!CAPTCHA_RE.test(e.textContent || "") && getComputedStyle(e).position === "fixed") {
-          e.remove();
-          actions.push("removed overlay");
-        }
-      });
+    // 4. Remove generic fixed/sticky overlays: full-viewport backdrops, and promo modals
+    //    (fixed, high z-index, marketing wording). Never touch captcha or payment UIs.
+    document.querySelectorAll<HTMLElement>("div, section, aside").forEach((e) => {
+      const s = getComputedStyle(e);
+      if (s.position !== "fixed" && s.position !== "sticky") return;
+      const z = parseInt(s.zIndex || "0", 10) || 0;
+      if (z < 50) return;
+      const txt = e.textContent || "";
+      if (CAPTCHA_RE.test(txt) || hasPaymentField(e)) return;
+      const r = e.getBoundingClientRect();
+      const coversViewport =
+        r.width >= window.innerWidth * 0.85 && r.height >= window.innerHeight * 0.85;
+      const isPromoModal =
+        PROMO_RE.test(txt) && r.width > 200 && r.height > 150 && txt.length < 1200;
+      // A bare full-screen backdrop (little text) or a promo modal → remove.
+      if ((coversViewport && txt.trim().length < 400) || isPromoModal) {
+        e.remove();
+        actions.push(coversViewport ? "removed overlay backdrop" : "removed promo modal");
+      }
+    });
 
-    // Press Escape
+    // 5. Re-enable scroll that popups often lock on <body>/<html>.
+    for (const el of [document.documentElement, document.body]) {
+      if (el && el.style.overflow === "hidden") {
+        el.style.overflow = "";
+        actions.push("restored scroll");
+      }
+    }
+
+    // 6. Press Escape.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     actions.push("pressed Escape");
 

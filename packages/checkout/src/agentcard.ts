@@ -13,7 +13,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { CardInfo } from "@bloon/core";
+import type { CardInfo } from "@tomo/core";
 
 const execFileAsync = promisify(execFile);
 

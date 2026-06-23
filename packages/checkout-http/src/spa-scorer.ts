@@ -14,7 +14,7 @@ import * as cheerio from "cheerio";
 import {
   SPA_DETECTION_SIGNALS,
   SPA_SCORE_THRESHOLD,
-} from "@bloon/core";
+} from "@tomo/core";
 import type { SpaScore, SpaSignalResult } from "./types.js";
 
 // ---- Framework marker detection ----

@@ -2,15 +2,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ShippingInfo } from "@bloon/core";
+import type { ShippingInfo } from "@tomo/core";
 
 // ---- Mock external packages ----
 
-vi.mock("@bloon/checkout", () => ({
+vi.mock("@tomo/checkout", () => ({
   discoverPrice: vi.fn(),
 }));
 
-import { discoverPrice } from "@bloon/checkout";
+import { discoverPrice } from "@tomo/checkout";
 import { buy } from "../src/buy.js";
 
 const mockedDiscoverPrice = vi.mocked(discoverPrice);
@@ -42,8 +42,8 @@ const testShipping: ShippingInfo = {
 };
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bloon-buy-test-"));
-  process.env.BLOON_DATA_DIR = tmpDir;
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tomo-buy-test-"));
+  process.env.TOMO_DATA_DIR = tmpDir;
   setupConfig();
   vi.clearAllMocks();
   // Clear shipping defaults
@@ -52,7 +52,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  delete process.env.BLOON_DATA_DIR;
+  delete process.env.TOMO_DATA_DIR;
 });
 
 // ---- Tests ----

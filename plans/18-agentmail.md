@@ -2,7 +2,7 @@
 
 ## Why
 
-Some checkout flows (Shopify email-first, merchant OTP) require a verification code sent to the buyer's email. Without an inbox under Bloon's control, these codes can't be retrieved programmatically. AgentMail gives Bloon its own email address so it can receive and extract codes during checkout.
+Some checkout flows (Shopify email-first, merchant OTP) require a verification code sent to the buyer's email. Without an inbox under Tomo's control, these codes can't be retrieved programmatically. AgentMail gives Tomo its own email address so it can receive and extract codes during checkout.
 
 ## How AgentMail Works
 

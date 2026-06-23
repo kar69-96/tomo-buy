@@ -205,7 +205,7 @@ curl -X POST http://localhost:3000/api/buy \
 
 # 3. Confirm
 curl -X POST http://localhost:3000/api/confirm \
-  -d '{"order_id":"bloon_ord_xyz"}'
+  -d '{"order_id":"tomo_ord_xyz"}'
 ```
 
 The `required_fields` in each search result tells the agent exactly what to collect before calling `buy`.

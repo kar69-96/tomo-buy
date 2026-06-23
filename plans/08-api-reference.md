@@ -4,7 +4,7 @@
 **Auth:** None (single operator).
 **Content-Type:** `application/json`
 
-> **Architecture note:** Bloon uses credit card via browser checkout only. The blockchain/USDC/wallet/x402 system has been removed. There are 3 endpoints: `POST /api/query`, `POST /api/buy`, `POST /api/confirm`.
+> **Architecture note:** Tomo uses credit card via browser checkout only. The blockchain/USDC/wallet/x402 system has been removed. There are 3 endpoints: `POST /api/query`, `POST /api/buy`, `POST /api/confirm`.
 
 ---
 
@@ -171,7 +171,7 @@ curl -X POST http://localhost:3000/api/buy \
 **200 OK (Firecrawl or scrape discovery):**
 ```json
 {
-  "order_id": "bloon_ord_9x2k4m",
+  "order_id": "tomo_ord_9x2k4m",
   "product": {
     "name": "Anker 5-in-1 USB-C Hub",
     "url": "https://amazon.com/dp/B08EXAMPLE",
@@ -198,7 +198,7 @@ Returned when scrape can't determine shipping cost. Browserbase session adds ite
 
 ```json
 {
-  "order_id": "bloon_ord_8k4n2p",
+  "order_id": "tomo_ord_8k4n2p",
   "product": {
     "name": "Sony WH-1000XM5 Headphones",
     "url": "https://target.com/p/sony-headphones/...",
@@ -241,7 +241,7 @@ Execute a purchase. Runs browser checkout with the operator's credit card and re
 ```bash
 curl -X POST http://localhost:3000/api/confirm \
   -H "Content-Type: application/json" \
-  -d '{ "order_id": "bloon_ord_9x2k4m" }'
+  -d '{ "order_id": "tomo_ord_9x2k4m" }'
 ```
 
 | Field | Type | Required | Description |
@@ -251,7 +251,7 @@ curl -X POST http://localhost:3000/api/confirm \
 **200 OK (completed):**
 ```json
 {
-  "order_id": "bloon_ord_9x2k4m",
+  "order_id": "tomo_ord_9x2k4m",
   "status": "completed",
   "receipt": {
     "product": "Anker 5-in-1 USB-C Hub",
@@ -271,7 +271,7 @@ curl -X POST http://localhost:3000/api/confirm \
 **500 (failed):**
 ```json
 {
-  "order_id": "bloon_ord_9x2k4m",
+  "order_id": "tomo_ord_9x2k4m",
   "status": "failed",
   "error": {
     "code": "CHECKOUT_FAILED",

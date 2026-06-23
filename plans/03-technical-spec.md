@@ -1,11 +1,11 @@
-# Technical Spec — Bloon v1
+# Technical Spec — Tomo v1
 
 ## API vs MCP — Why API-First
 
 | | REST API (chosen) | MCP |
 |---|---|---|
 | **Reach** | Any agent, any language, any framework — just HTTP | Only MCP-compatible clients |
-| **Discovery** | skill.md — agents find and use Bloon immediately | Must pre-install locally |
+| **Discovery** | skill.md — agents find and use Tomo immediately | Must pre-install locally |
 | **Hosting** | One server, many agents, works remotely | Local only |
 | **Multi-tenant path** | Natural | Full rewrite |
 | **Long-running checkout** | Async HTTP — natural fit | Blocks stdio pipe |
@@ -59,16 +59,16 @@ MCP wrapper planned for v2 — thin layer that calls the REST API.
 └────────────────────────────┘
 ```
 
-> **Note:** The `wallet` and `x402` packages have been removed. Bloon now uses credit card via browser checkout only. Stub re-exports may exist in `packages/stubs/` for backward compatibility.
+> **Note:** The `wallet` and `x402` packages have been removed. Tomo now uses credit card via browser checkout only. Stub re-exports may exist in `packages/stubs/` for backward compatibility.
 
 ## Monorepo Structure
 
 ```
-bloon/
+tomo/
 ├── packages/
 │   ├── core/src/
 │   │   ├── types.ts              # All TypeScript interfaces + error codes
-│   │   ├── store.ts              # JSON file persistence (~/.bloon/) with atomic writes
+│   │   ├── store.ts              # JSON file persistence (~/.tomo/) with atomic writes
 │   │   ├── fees.ts               # 2% flat fee (BigInt arithmetic)
 │   │   ├── config.ts             # Load .env + config.json
 │   │   ├── concurrency-pool.ts   # Generic async task queue (order-preserving)
@@ -116,7 +116,7 @@ bloon/
 │   └── api/src/
 │       ├── server.ts        # Hono app + route wiring + error handler
 │       ├── formatters.ts    # Response formatters (wallet, query, buy, confirm)
-│       ├── error-handler.ts # BloonError → HTTP status mapping
+│       ├── error-handler.ts # TomoError → HTTP status mapping
 │       ├── routes/
 │       │   ├── query.ts     # POST /api/query
 │       │   ├── buy.ts       # POST /api/buy
@@ -173,7 +173,7 @@ From AgentPay. Browserbase's AI browser automation SDK — provides `act()`, `ob
 Each checkout = fresh session. But we cache cookies/localStorage per domain:
 - Skips cookie banners, preserves preferences on repeat visits
 - NOT login persistence — no auth tokens cached
-- Cache stored at `~/.bloon/cache/{domain}.json`
+- Cache stored at `~/.tomo/cache/{domain}.json`
 
 ### 6. Hono
 
@@ -185,7 +185,7 @@ Not open source. Deployed and operated by you.
 
 ### 8. Price Discovery — Tiered Approach
 
-`POST /api/buy` must return the **full price** the agent will pay (item + tax + shipping + Bloon fee). Price discovery uses a tiered approach:
+`POST /api/buy` must return the **full price** the agent will pay (item + tax + shipping + Tomo fee). Price discovery uses a tiered approach:
 
 **Tier 1: Firecrawl (primary, rich)**
 - Uses Firecrawl `/v1/scrape` endpoint with up to 3 attempts (exponential backoff: 2s, 4s)

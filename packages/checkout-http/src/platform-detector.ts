@@ -8,7 +8,7 @@
  * Returns the first match found.
  */
 
-import type { PlatformType } from "@bloon/core";
+import type { PlatformType } from "@tomo/core";
 import type { FetchResult, PageSnapshot } from "./types.js";
 
 // ---- Helpers ----

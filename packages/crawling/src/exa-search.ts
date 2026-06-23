@@ -6,7 +6,7 @@
 
 import { getExaClient } from "./exa-client.js";
 import { stripCurrencySymbol, isValidPrice, mapOptions, cleanExtractField } from "./helpers.js";
-import type { ProductOption } from "@bloon/core";
+import type { ProductOption } from "@tomo/core";
 
 // ---- Config ----
 

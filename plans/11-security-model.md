@@ -1,4 +1,4 @@
-# Security Model — Bloon v1
+# Security Model — Tomo v1
 
 ## Auth Model
 

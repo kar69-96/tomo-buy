@@ -1,10 +1,10 @@
 /**
- * Map site-specific field names to Bloon's standard field names.
+ * Map site-specific field names to Tomo's standard field names.
  *
  * Rule-based first, then LLM fallback (Gemini) for unknown fields.
  */
 
-import type { FieldMapping } from "@bloon/core";
+import type { FieldMapping } from "@tomo/core";
 import type { FormField } from "./types.js";
 
 // ---- Autocomplete attribute → standard field name ----

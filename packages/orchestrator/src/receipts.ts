@@ -1,5 +1,5 @@
-import type { Order, Receipt } from "@bloon/core";
-import type { CheckoutResult } from "@bloon/checkout";
+import type { Order, Receipt } from "@tomo/core";
+import type { CheckoutResult } from "@tomo/checkout";
 
 export interface ReceiptInput {
   order: Order;

@@ -1,12 +1,12 @@
-# Bloon
+# Tomo
 
-> **ARCHIVED (2026-03-19):** This document describes the original USDC/blockchain architecture. Bloon has been migrated to credit-card-only. See `CLAUDE.md` and `docs/skill.md` for the current architecture.
+> **ARCHIVED (2026-03-19):** This document describes the original USDC/blockchain architecture. Tomo has been migrated to credit-card-only. See `CLAUDE.md` and `docs/skill.md` for the current architecture.
 
 **Any website. Any product. One USDC payment. The agent handles the rest.**
 
-Bloon is a REST API (TypeScript/Hono) that lets AI agents purchase anything on the internet using USDC on Base. No API keys. No registration. The agent's `wallet_id` is its credential. Bloon auto-routes payments — x402-native merchants get paid directly (2% fee), everything else goes through Browserbase cloud browser checkout with Stagehand (2% fee). Same interface, same receipt format either way.
+Tomo is a REST API (TypeScript/Hono) that lets AI agents purchase anything on the internet using USDC on Base. No API keys. No registration. The agent's `wallet_id` is its credential. Tomo auto-routes payments — x402-native merchants get paid directly (2% fee), everything else goes through Browserbase cloud browser checkout with Stagehand (2% fee). Same interface, same receipt format either way.
 
-The internet has two emerging payment layers for agents: x402 (for services that natively accept stablecoin over HTTP) and ACP (Stripe/OpenAI's protocol for opted-in merchants). But 99.9% of e-commerce speaks neither. Bloon bridges that gap — turning every checkout page on the web into an endpoint an agent can pay.
+The internet has two emerging payment layers for agents: x402 (for services that natively accept stablecoin over HTTP) and ACP (Stripe/OpenAI's protocol for opted-in merchants). But 99.9% of e-commerce speaks neither. Tomo bridges that gap — turning every checkout page on the web into an endpoint an agent can pay.
 
 ## v1 Scope
 
@@ -24,7 +24,7 @@ The internet has two emerging payment layers for agents: x402 (for services that
 - **12-step browser checkout** with Stagehand agent + custom tools (fillShippingInfo, fillCardFields, fillBillingAddress)
 - **Fresh Browserbase sessions** per checkout, with domain-level page caching
 - **$25 max** per transaction, US shipping only, buy-only wallets
-- **JSON file storage** in `~/.bloon/` with atomic writes — no database
+- **JSON file storage** in `~/.tomo/` with atomic writes — no database
 - **Closed source**, single operator
 
 ## API Endpoints
@@ -40,7 +40,7 @@ The internet has two emerging payment layers for agents: x402 (for services that
 
 ## Fee Model
 
-- **x402-native merchants:** 2% fee (Bloon pays the service on behalf of the agent)
+- **x402-native merchants:** 2% fee (Tomo pays the service on behalf of the agent)
 - **Non-x402 merchants (browser checkout):** 2% fee (covers Browserbase sessions, Stagehand LLM inference, and margin)
 - **Gas costs** are covered by the fee — the agent only needs USDC, not ETH
 
@@ -87,9 +87,9 @@ Agent: POST /api/buy {
 ### 4. Confirm & Purchase
 
 ```
-Agent: POST /api/confirm { "order_id": "bloon_ord_9x2k4m" }
+Agent: POST /api/confirm { "order_id": "tomo_ord_9x2k4m" }
 
-Server: transfers USDC from agent wallet --> Bloon master wallet
+Server: transfers USDC from agent wallet --> Tomo master wallet
   - x402: pays service via @x402/fetch --> returns response + receipt
   - Browser: Browserbase session --> Stagehand 12-step checkout --> returns order number + receipt
 ```
@@ -190,12 +190,12 @@ packages/
 
 ## Competitive Landscape
 
-| Solution | What it does | Gap Bloon fills |
+| Solution | What it does | Gap Tomo fills |
 |----------|-------------|-----------------|
 | x402 (Coinbase) | Native stablecoin payments over HTTP | Only works if the seller has integrated x402 |
 | ACP (Stripe/OpenAI) | Agentic checkout for opted-in merchants | Only works for merchants in the ACP network |
 | Sponge (YC) | Agent wallets + business gateway | Requires businesses to onboard; can't buy from arbitrary websites |
-| **Bloon** | **Any URL. One USDC payment. Receipt back.** | **Bridges the 99.9% of the web that doesn't speak any agent protocol** |
+| **Tomo** | **Any URL. One USDC payment. Receipt back.** | **Bridges the 99.9% of the web that doesn't speak any agent protocol** |
 
 ---
 

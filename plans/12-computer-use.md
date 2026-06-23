@@ -1,6 +1,6 @@
 # Computer Use — Browserbase + Stagehand (Phase 4)
 
-Phase 4 is the largest and highest-risk phase. It builds `packages/checkout/` — the browser automation system that lets Bloon purchase physical products from any e-commerce site using a cloud browser controlled by an LLM.
+Phase 4 is the largest and highest-risk phase. It builds `packages/checkout/` — the browser automation system that lets Tomo purchase physical products from any e-commerce site using a cloud browser controlled by an LLM.
 
 **Stack**: Browserbase (cloud browser) + Stagehand (AI browser automation SDK, also by Browserbase) + Playwright (CDP credential fills).
 
@@ -202,7 +202,7 @@ try {
 
 ## Stagehand Primitives
 
-Stagehand provides three core methods + an agent mode. Bloon uses the primitives directly for maximum control.
+Stagehand provides three core methods + an agent mode. Tomo uses the primitives directly for maximum control.
 
 ### `act()` — Perform an Action
 
@@ -274,7 +274,7 @@ Stagehand also has an `agent()` mode for autonomous multi-step tasks. We do NOT 
 2. Less control over individual steps — harder to insert CDP fills at the right moment
 3. Harder to audit and debug
 
-Instead, Bloon orchestrates the checkout step-by-step using `act()`, `observe()`, and `extract()`.
+Instead, Tomo orchestrates the checkout step-by-step using `act()`, `observe()`, and `extract()`.
 
 ---
 
@@ -664,7 +664,7 @@ Fresh sessions per checkout means no state carries over. But we cache cookies an
 ### Storage
 
 ```
-~/.bloon/cache/
+~/.tomo/cache/
   target.com.json
   bestbuy.com.json
   amazon.com.json
@@ -870,7 +870,7 @@ try {
 
 **Domain cache:**
 ```
-[ ] First visit creates ~/.bloon/cache/{domain}.json
+[ ] First visit creates ~/.tomo/cache/{domain}.json
 [ ] Second visit injects cached cookies
 [ ] No auth tokens in cache
 ```
@@ -882,7 +882,7 @@ After **every** browser checkout test:
 - [ ] Card fills only appear in CDP/Playwright logs
 - [ ] Non-card fields show `%var%` placeholders in Stagehand logs
 - [ ] No credentials in API response bodies
-- [ ] No credentials in `~/.bloon/orders.json`
+- [ ] No credentials in `~/.tomo/orders.json`
 
 ### Debugging Failed Checkouts
 
@@ -924,9 +924,9 @@ Prevents prompt injection via shipping fields.
 
 ### Stagehand vs browser-use
 
-Bloon uses Stagehand (not browser-use) because:
+Tomo uses Stagehand (not browser-use) because:
 - **Same vendor**: Stagehand is built by Browserbase — tightest integration
-- **TypeScript-native**: No Python dependency, runs natively in the Bloon stack
+- **TypeScript-native**: No Python dependency, runs natively in the Tomo stack
 - **Primitives over agents**: `act()`/`observe()`/`extract()` give step-by-step control vs browser-use's autonomous agent loop
 - **Built-in iframe/shadow DOM**: Stagehand handles these automatically
 - **`variables` parameter**: Built-in credential protection without needing `sensitive_data` workarounds
@@ -935,9 +935,9 @@ Bloon uses Stagehand (not browser-use) because:
 
 ## Reference: AgentPay Patterns
 
-Bloon's checkout system draws from AgentPay's `StagehandProxy`. Key patterns adapted:
+Tomo's checkout system draws from AgentPay's `StagehandProxy`. Key patterns adapted:
 
-| AgentPay Pattern | Bloon Adaptation |
+| AgentPay Pattern | Tomo Adaptation |
 |-----------------|------------------|
 | `StagehandProxy` — dual channel (Stagehand + CDP) | Same architecture: Stagehand for navigation, CDP for card fills |
 | `fillField(selector, value)` via Playwright CDP | `fill.ts` — same approach, card values go direct to DOM |
@@ -947,4 +947,4 @@ Bloon's checkout system draws from AgentPay's `StagehandProxy`. Key patterns ada
 | `VALID_FIELD_NAMES` + `getCredentialValue()` | `credentials.ts` — same field map pattern |
 | REST API session creation + 429 retry | `session.ts` — same REST API, same retry pattern |
 | Session replay URL logging | Stored in order record + receipt |
-| 10-minute idle timeout | 5-minute hard timeout (Bloon checkouts are non-interactive) |
+| 10-minute idle timeout | 5-minute hard timeout (Tomo checkouts are non-interactive) |

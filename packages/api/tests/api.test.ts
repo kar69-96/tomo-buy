@@ -2,18 +2,18 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { Order, Receipt } from "@bloon/core";
+import type { Order, Receipt } from "@tomo/core";
 
 // ---- Mock external packages ----
 
-vi.mock("@bloon/orchestrator", () => ({
+vi.mock("@tomo/orchestrator", () => ({
   buy: vi.fn(),
   confirm: vi.fn(),
   query: vi.fn(),
   searchQuery: vi.fn(),
 }));
 
-import { buy, confirm, query, searchQuery } from "@bloon/orchestrator";
+import { buy, confirm, query, searchQuery } from "@tomo/orchestrator";
 import { createApp } from "../src/server.js";
 
 const mockedBuy = vi.mocked(buy);
@@ -39,7 +39,7 @@ function setupConfig(): void {
 
 function setupOrder(overrides: Partial<Order> = {}): Order {
   const order: Order = {
-    order_id: "bloon_ord_test01",
+    order_id: "tomo_ord_test01",
     status: "awaiting_confirmation",
     product: {
       name: "Test Product",
@@ -81,8 +81,8 @@ async function req(method: string, pathStr: string, body?: unknown) {
 }
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bloon-api-test-"));
-  process.env.BLOON_DATA_DIR = tmpDir;
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tomo-api-test-"));
+  process.env.TOMO_DATA_DIR = tmpDir;
   setupConfig();
   vi.clearAllMocks();
   app = createApp();
@@ -90,7 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  delete process.env.BLOON_DATA_DIR;
+  delete process.env.TOMO_DATA_DIR;
 });
 
 // ---- POST /api/buy ----
@@ -98,7 +98,7 @@ afterEach(() => {
 describe("POST /api/buy", () => {
   it("returns buy quote with 200", async () => {
     const fakeOrder: Order = {
-      order_id: "bloon_ord_buy01",
+      order_id: "tomo_ord_buy01",
       status: "awaiting_confirmation",
       product: {
         name: "Widget",
@@ -123,7 +123,7 @@ describe("POST /api/buy", () => {
     expect(res.status).toBe(200);
 
     const json = await res.json();
-    expect(json.order_id).toBe("bloon_ord_buy01");
+    expect(json.order_id).toBe("tomo_ord_buy01");
     expect(json.product.name).toBe("Widget");
     expect(json.product.source).toBe("shop.example.com");
     expect(json.payment.item_price).toBe("10.00");
@@ -141,9 +141,9 @@ describe("POST /api/buy", () => {
   });
 
   it("propagates INVALID_URL from orchestrator", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedBuy.mockRejectedValue(
-      new BloonError(ErrorCodes.INVALID_URL, "Invalid URL"),
+      new TomoError(ErrorCodes.INVALID_URL, "Invalid URL"),
     );
 
     const res = await req("POST", "/api/buy", {
@@ -170,7 +170,7 @@ describe("POST /api/confirm", () => {
     };
 
     const completedOrder: Order = {
-      order_id: "bloon_ord_conf01",
+      order_id: "tomo_ord_conf01",
       status: "completed",
       product: {
         name: "Widget",
@@ -194,12 +194,12 @@ describe("POST /api/confirm", () => {
     mockedConfirm.mockResolvedValue({ order: completedOrder, receipt });
 
     const res = await req("POST", "/api/confirm", {
-      order_id: "bloon_ord_conf01",
+      order_id: "tomo_ord_conf01",
     });
     expect(res.status).toBe(200);
 
     const json = await res.json();
-    expect(json.order_id).toBe("bloon_ord_conf01");
+    expect(json.order_id).toBe("tomo_ord_conf01");
     expect(json.status).toBe("completed");
     expect(json.receipt.product).toBe("Widget");
     expect(json.receipt.order_number).toBe("ORD-123");
@@ -213,13 +213,13 @@ describe("POST /api/confirm", () => {
   });
 
   it("propagates ORDER_NOT_FOUND from orchestrator", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedConfirm.mockRejectedValue(
-      new BloonError(ErrorCodes.ORDER_NOT_FOUND, "Not found"),
+      new TomoError(ErrorCodes.ORDER_NOT_FOUND, "Not found"),
     );
 
     const res = await req("POST", "/api/confirm", {
-      order_id: "bloon_ord_bad",
+      order_id: "tomo_ord_bad",
     });
     expect(res.status).toBe(404);
     const json = await res.json();
@@ -227,13 +227,13 @@ describe("POST /api/confirm", () => {
   });
 
   it("propagates ORDER_EXPIRED from orchestrator", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedConfirm.mockRejectedValue(
-      new BloonError(ErrorCodes.ORDER_EXPIRED, "Expired"),
+      new TomoError(ErrorCodes.ORDER_EXPIRED, "Expired"),
     );
 
     const res = await req("POST", "/api/confirm", {
-      order_id: "bloon_ord_expired",
+      order_id: "tomo_ord_expired",
     });
     expect(res.status).toBe(410);
     const json = await res.json();
@@ -241,11 +241,11 @@ describe("POST /api/confirm", () => {
   });
 
   it("returns 200 with failed status when checkout failed", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
 
     // Set up a failed order in the store
     setupOrder({
-      order_id: "bloon_ord_fail01",
+      order_id: "tomo_ord_fail01",
       status: "failed",
       error: {
         code: "CHECKOUT_FAILED",
@@ -254,16 +254,16 @@ describe("POST /api/confirm", () => {
     });
 
     mockedConfirm.mockRejectedValue(
-      new BloonError(ErrorCodes.CHECKOUT_FAILED, "Checkout timed out"),
+      new TomoError(ErrorCodes.CHECKOUT_FAILED, "Checkout timed out"),
     );
 
     const res = await req("POST", "/api/confirm", {
-      order_id: "bloon_ord_fail01",
+      order_id: "tomo_ord_fail01",
     });
     expect(res.status).toBe(200);
 
     const json = await res.json();
-    expect(json.order_id).toBe("bloon_ord_fail01");
+    expect(json.order_id).toBe("tomo_ord_fail01");
     expect(json.status).toBe("failed");
     expect(json.error.code).toBe("CHECKOUT_FAILED");
   });
@@ -279,7 +279,7 @@ describe("POST /api/confirm", () => {
     };
 
     const order: Order = {
-      order_id: "bloon_ord_already",
+      order_id: "tomo_ord_already",
       status: "completed",
       product: {
         name: "Already Done",
@@ -301,7 +301,7 @@ describe("POST /api/confirm", () => {
     mockedConfirm.mockResolvedValue({ order, receipt });
 
     const res = await req("POST", "/api/confirm", {
-      order_id: "bloon_ord_already",
+      order_id: "tomo_ord_already",
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -350,9 +350,9 @@ describe("POST /api/query", () => {
   });
 
   it("propagates QUERY_FAILED from orchestrator", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedQuery.mockRejectedValue(
-      new BloonError(ErrorCodes.QUERY_FAILED, "Discovery failed"),
+      new TomoError(ErrorCodes.QUERY_FAILED, "Discovery failed"),
     );
 
     const res = await req("POST", "/api/query", {
@@ -470,9 +470,9 @@ describe("POST /api/query", () => {
   });
 
   it("propagates SEARCH_NO_RESULTS as 404", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedSearchQuery.mockRejectedValue(
-      new BloonError(ErrorCodes.SEARCH_NO_RESULTS, "No products found"),
+      new TomoError(ErrorCodes.SEARCH_NO_RESULTS, "No products found"),
     );
 
     const res = await req("POST", "/api/query", { query: "nonexistent xyzabc" });
@@ -482,9 +482,9 @@ describe("POST /api/query", () => {
   });
 
   it("propagates SEARCH_UNAVAILABLE as 503", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedSearchQuery.mockRejectedValue(
-      new BloonError(ErrorCodes.SEARCH_UNAVAILABLE, "EXA_API_KEY not set"),
+      new TomoError(ErrorCodes.SEARCH_UNAVAILABLE, "EXA_API_KEY not set"),
     );
 
     const res = await req("POST", "/api/query", { query: "towels" });
@@ -494,9 +494,9 @@ describe("POST /api/query", () => {
   });
 
   it("propagates SEARCH_RATE_LIMITED as 429", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedSearchQuery.mockRejectedValue(
-      new BloonError(ErrorCodes.SEARCH_RATE_LIMITED, "Rate limit exceeded"),
+      new TomoError(ErrorCodes.SEARCH_RATE_LIMITED, "Rate limit exceeded"),
     );
 
     const res = await req("POST", "/api/query", { query: "towels" });
@@ -562,7 +562,7 @@ describe("POST /api/query", () => {
 describe("POST /api/buy (selections)", () => {
   it("passes selections through to orchestrator", async () => {
     const fakeOrder: Order = {
-      order_id: "bloon_ord_sel01",
+      order_id: "tomo_ord_sel01",
       status: "awaiting_confirmation",
       product: {
         name: "Sneaker",
@@ -597,9 +597,9 @@ describe("POST /api/buy (selections)", () => {
   });
 
   it("propagates INVALID_SELECTION from orchestrator", async () => {
-    const { BloonError, ErrorCodes } = await import("@bloon/core");
+    const { TomoError, ErrorCodes } = await import("@tomo/core");
     mockedBuy.mockRejectedValue(
-      new BloonError(ErrorCodes.INVALID_SELECTION, "Bad selection"),
+      new TomoError(ErrorCodes.INVALID_SELECTION, "Bad selection"),
     );
 
     const res = await req("POST", "/api/buy", {

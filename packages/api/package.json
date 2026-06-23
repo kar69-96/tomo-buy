@@ -1,5 +1,5 @@
 {
-  "name": "@bloon/api",
+  "name": "@tomo/api",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,8 +9,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.8.0",
-    "@bloon/core": "workspace:*",
-    "@bloon/orchestrator": "workspace:*",
+    "@tomo/core": "workspace:*",
+    "@tomo/orchestrator": "workspace:*",
+    "@tomo/planner": "workspace:*",
     "hono": "^4.0.0"
   }
 }

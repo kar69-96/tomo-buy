@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import { walkCheckoutFlow } from "../src/http-walker.js";
-import type { ShippingInfo } from "@bloon/core";
+import type { ShippingInfo } from "@tomo/core";
 
 const hasEnv =
   !!process.env.BROWSERBASE_API_KEY &&

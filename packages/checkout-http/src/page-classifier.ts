@@ -1,7 +1,7 @@
 /**
  * Classify a PageSnapshot into a PageType with confidence score.
  *
- * Uses shared classification signals from @bloon/core. Works on
+ * Uses shared classification signals from @tomo/core. Works on
  * the cheerio-parsed PageSnapshot (no DOM access). Each rule checks
  * text content, form fields, buttons, URLs, and selectors against
  * known signal arrays.
@@ -14,7 +14,7 @@
  * Pure function -- no side effects, no network calls.
  */
 
-import type { PageType } from "@bloon/core";
+import type { PageType } from "@tomo/core";
 import {
   CONFIRMATION_TEXT_SIGNALS,
   CONFIRMATION_URL_PATTERNS,
@@ -29,7 +29,7 @@ import {
   PAYMENT_IFRAME_SELECTORS,
   VERIFICATION_TEXT_SIGNALS,
   CHECKOUT_BUTTON_SELECTOR,
-} from "@bloon/core";
+} from "@tomo/core";
 import type { PageSnapshot } from "./types.js";
 
 // ---- Classification result ----

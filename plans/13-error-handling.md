@@ -1,4 +1,4 @@
-# Error Handling — Bloon v1
+# Error Handling — Tomo v1
 
 ## Error Response Format
 
@@ -71,7 +71,7 @@ When `CHECKOUT_FAILED` occurs:
 
 ```json
 {
-  "order_id": "bloon_ord_9x2k4m",
+  "order_id": "tomo_ord_9x2k4m",
   "status": "failed",
   "error": {
     "code": "CHECKOUT_FAILED",

@@ -6,7 +6,7 @@
  * Max 5 redirects per fetch (configurable).
  */
 
-import { MAX_REDIRECTS_PER_STEP } from "@bloon/core";
+import { MAX_REDIRECTS_PER_STEP } from "@tomo/core";
 import type { SessionState, FetchResult, RedirectEntry } from "./types.js";
 import {
   buildRequestHeaders,

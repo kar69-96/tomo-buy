@@ -1,7 +1,7 @@
 /**
  * Read/write SiteProfile JSON files to disk.
  *
- * Profiles are stored at ~/.bloon/profiles/{domain}.json with
+ * Profiles are stored at ~/.tomo/profiles/{domain}.json with
  * restricted permissions (0o700 directory, 0o600 files). Writes
  * are atomic (write to .tmp, rename) to prevent corruption on
  * crash or concurrent access.
@@ -13,19 +13,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { SiteProfile } from "@bloon/core";
+import type { SiteProfile } from "@tomo/core";
 import {
   DEFAULT_PROFILE_TTL_MS,
   MIN_PROFILE_TTL_MS,
-} from "@bloon/core";
+} from "@tomo/core";
 
 // ---- Directory helpers ----
 
 /**
- * Returns the profiles directory path: ~/.bloon/profiles
+ * Returns the profiles directory path: ~/.tomo/profiles
  */
 export function getProfileDir(): string {
-  return path.join(os.homedir(), ".bloon", "profiles");
+  return path.join(os.homedir(), ".tomo", "profiles");
 }
 
 /**

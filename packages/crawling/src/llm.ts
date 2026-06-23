@@ -1,7 +1,7 @@
 /**
  * OpenRouter chat client for the crawling package (fetch-based, no SDK).
  *
- * crawling cannot import from @bloon/checkout (checkout depends on crawling), so
+ * crawling cannot import from @tomo/checkout (checkout depends on crawling), so
  * this mirrors checkout/src/llm.ts. Used for structured product extraction from
  * rendered page markdown — replaces the old Gemini path.
  */

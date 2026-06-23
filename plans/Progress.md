@@ -1238,7 +1238,7 @@ tests/e2e/                  ← Phase 7 (config, errors, x402-flow, browser-flow
 4. Patched Firecrawl to use native Gemini (not OpenAI) and stripped Vertex-only `labels` from all AI SDK calls.
 5. Validated self-hosted extraction against cloud baselines — results match.
 
-### New Package: `@bloon/crawling`
+### New Package: `@tomo/crawling`
 
 | File | Purpose |
 |------|---------|
@@ -1256,8 +1256,8 @@ tests/e2e/                  ← Phase 7 (config, errors, x402-flow, browser-flow
 ### Key Changes
 
 1. **Configurable base URL** — `FIRECRAWL_BASE_URL` env var defaults to `http://localhost:3002` (self-hosted). Set to `https://api.firecrawl.dev` for cloud.
-2. **`concurrencyPool` moved to `@bloon/core`** — shared between crawling and checkout.
-3. **Checkout slimmed** — `packages/checkout/src/discover.ts` now imports from `@bloon/crawling`. Removed ~360 lines of Firecrawl code.
+2. **`concurrencyPool` moved to `@tomo/core`** — shared between crawling and checkout.
+3. **Checkout slimmed** — `packages/checkout/src/discover.ts` now imports from `@tomo/crawling`. Removed ~360 lines of Firecrawl code.
 4. **Git submodule** — `packages/crawling/firecrawl/` → `github.com/mendableai/firecrawl.git`
 5. **Self-hosted scripts (no Docker)** — `start.sh` runs Firecrawl from source via npm, `stop.sh` kills the process, `health.sh` checks port 3002.
 

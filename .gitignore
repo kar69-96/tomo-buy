@@ -33,6 +33,9 @@ coverage/
 # Temporal local data
 .temporal/
 
-# Bloon/agentbuy local order store
-.bloon/
+# Tomo/agentbuy local order store
+.tomo/
 .firecrawl.pid
+
+# Live E2E trace artifacts (screenshots + JSONL)
+traces/

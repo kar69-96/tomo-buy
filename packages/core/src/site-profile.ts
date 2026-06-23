@@ -121,7 +121,7 @@ export interface TokenLocation {
 // ---- Field mapping ----
 
 /**
- * Maps the site's field names to Bloon's standard field names.
+ * Maps the site's field names to Tomo's standard field names.
  * e.g., { siteField: "administrative_area", standardField: "state" }
  */
 export interface FieldMapping {

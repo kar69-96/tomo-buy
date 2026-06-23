@@ -1,4 +1,4 @@
-import { BloonError } from "@bloon/core";
+import { TomoError } from "@tomo/core";
 import type { ErrorHandler } from "hono";
 
 const STATUS_MAP: Record<string, number> = {
@@ -17,10 +17,17 @@ const STATUS_MAP: Record<string, number> = {
   SEARCH_NO_RESULTS: 404,
   SEARCH_UNAVAILABLE: 503,
   SEARCH_RATE_LIMITED: 429,
+  IDENTITY_NOT_FOUND: 404,
+  LOGIN_FAILED: 502,
+  VAULT_LOCKED: 500,
+  COMPOSIO_NOT_CONNECTED: 503,
+  RUN_NOT_FOUND: 404,
+  RUN_INVALID_STATE: 409,
+  PLAN_FAILED: 502,
 };
 
 export const errorHandler: ErrorHandler = (err, c) => {
-  if (err instanceof BloonError) {
+  if (err instanceof TomoError) {
     const status = STATUS_MAP[err.code] ?? 500;
     return c.json({ error: { code: err.code, message: err.message } }, status as 400);
   }

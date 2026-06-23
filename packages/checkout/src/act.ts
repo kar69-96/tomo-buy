@@ -38,7 +38,7 @@ export interface ActOptions {
   maxSteps?: number;
 }
 
-const REF_ATTR = "data-bloon-ref";
+const REF_ATTR = "data-tomo-ref";
 
 async function snapshot(page: Page): Promise<SnapshotElement[]> {
   return (await page.evaluate((attr: string) => {

@@ -2,7 +2,7 @@
  * TDD: Field mapper tests (RED phase).
  *
  * Tests rule-based field name mapping from site-specific form fields
- * to Bloon's standard field names (shipping.email, shipping.name, etc.)
+ * to Tomo's standard field names (shipping.email, shipping.name, etc.)
  */
 
 import { describe, it, expect } from "vitest";

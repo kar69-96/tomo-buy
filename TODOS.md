@@ -7,7 +7,7 @@ Updated `plans/HTTP-engine.md` with all 8 architectural decisions + 3 critical g
 
 ### ~~TODO-2: Extract classification signal constants to shared module~~ DONE
 Created `packages/core/src/classification-signals.ts` with all shared signal arrays.
-Updated `packages/checkout/src/scripted-actions.ts` to import from `@bloon/core`.
+Updated `packages/checkout/src/scripted-actions.ts` to import from `@tomo/core`.
 Type-checks pass.
 
 ### ~~TODO-3: Define SiteProfile TypeScript interface~~ DONE

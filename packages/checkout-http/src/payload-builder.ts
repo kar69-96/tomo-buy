@@ -12,9 +12,9 @@
  * and missingFields lists any unresolvable PREVIOUS_RESPONSE keys.
  */
 
-import type { PayloadField } from "@bloon/core";
-import type { ShippingInfo, BillingInfo } from "@bloon/core";
-import { getBillingInfo } from "@bloon/core";
+import type { PayloadField } from "@tomo/core";
+import type { ShippingInfo, BillingInfo } from "@tomo/core";
+import { getBillingInfo } from "@tomo/core";
 import type { ExecutionContext } from "./types.js";
 
 // ---- User input lookup map ----

@@ -1,4 +1,4 @@
-# User Flow — Bloon v1
+# User Flow — Tomo v1
 
 ## Personas
 
@@ -39,7 +39,7 @@ Agent:
 Returns: order_id, product (Men's Tree Runners, $98.00), payment ($99.96, 2% fee)
 
 Agent decides to proceed:
-  POST /api/confirm { "order_id": "bloon_ord_9x2k4m" }
+  POST /api/confirm { "order_id": "tomo_ord_9x2k4m" }
 
 Server: launches 12-step browser checkout, fills forms with credit card via CDP, submits order
 

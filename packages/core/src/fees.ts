@@ -1,4 +1,4 @@
-import { BloonError, ErrorCodes } from "./types.js";
+import { TomoError, ErrorCodes } from "./types.js";
 
 const FEE_RATE = 20n; // 2% (numerator; denominator is 1000)
 

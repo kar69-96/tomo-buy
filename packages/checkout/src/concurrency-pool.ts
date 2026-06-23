@@ -1,1 +1,1 @@
-export { concurrencyPool } from "@bloon/core";
+export { concurrencyPool } from "@tomo/core";

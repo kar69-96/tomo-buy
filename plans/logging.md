@@ -1,6 +1,6 @@
-# Bloon — Logging & Monitoring Reference
+# Tomo — Logging & Monitoring Reference
 
-All observability in Bloon is custom-built. There are no third-party logging libraries (no winston, pino, sentry, datadog, etc.). Monitoring relies on `console.log`/`console.error`, the `CostTracker` class, `StepTracker`, and Browserbase session replay URLs.
+All observability in Tomo is custom-built. There are no third-party logging libraries (no winston, pino, sentry, datadog, etc.). Monitoring relies on `console.log`/`console.error`, the `CostTracker` class, `StepTracker`, and Browserbase session replay URLs.
 
 ---
 
@@ -33,7 +33,7 @@ The primary monitoring mechanism. Tracks LLM token usage and Browserbase session
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              BLOON RUN COST BREAKDOWN                   │
+│              TOMO RUN COST BREAKDOWN                   │
 ├───────────────────────┬──────────┬──────────┬───────────┤
 │ Operation             │ In Tokens│Out Tokens│ Est. $    │
 ├───────────────────────┼──────────┼──────────┼───────────┤
@@ -83,8 +83,8 @@ The primary monitoring mechanism. Tracks LLM token usage and Browserbase session
 
 | File | Line | Level | What it Logs |
 |------|------|-------|-------------|
-| `packages/api/src/index.ts` | 9 | `log` | Server startup: `Bloon listening on http://localhost:{port}` |
-| `packages/api/src/error-handler.ts` | 29 | `error` | Non-BloonError exceptions: `Unhandled error: {err}` |
+| `packages/api/src/index.ts` | 9 | `log` | Server startup: `Tomo listening on http://localhost:{port}` |
+| `packages/api/src/error-handler.ts` | 29 | `error` | Non-TomoError exceptions: `Unhandled error: {err}` |
 | `packages/checkout/src/cost-tracker.ts` | 112 | `log` | Cost breakdown ASCII table (from `printSummary()`) |
 
 ---
@@ -146,7 +146,7 @@ Every Browserbase session generates a replay URL for visual debugging of the bro
 
 ## 5. Stagehand Built-in Logging
 
-Stagehand emits its own `[INFO]` and `[ERROR]` lines via its internal logger. The Bloon code does **not** configure a custom `logger:` option on Stagehand, so its default console-based logging is active. This includes:
+Stagehand emits its own `[INFO]` and `[ERROR]` lines via its internal logger. The Tomo code does **not** configure a custom `logger:` option on Stagehand, so its default console-based logging is active. This includes:
 
 - Session connection events (`Browserbase session started/resumed`)
 - Agent tool calls (`Agent calling tool: act/ariaTree/done`)

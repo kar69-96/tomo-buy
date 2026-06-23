@@ -1,5 +1,5 @@
 {
-  "name": "@bloon/checkout",
+  "name": "@tomo/checkout",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -8,8 +8,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@bloon/core": "workspace:*",
-    "@bloon/crawling": "workspace:*",
+    "@tomo/core": "workspace:*",
+    "@tomo/crawling": "workspace:*",
+    "@tomo/identity": "workspace:*",
     "agentmail": "^0.3.7",
     "playwright": "^1.50.0",
     "zod": "^3.22.0"

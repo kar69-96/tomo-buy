@@ -250,12 +250,12 @@ Note: The Browserbase+Gemini repair path within the Firecrawl pipeline (Step 1b)
       ↓ if scrape fails (bot-blocked, no structured data)
 3. Browserbase + Stagehand (last resort — headless Chrome + LLM)
       ↓ if all fail
-   BloonError: QUERY_FAILED
+   TomoError: QUERY_FAILED
 ```
 
 ## Self-Hosted Firecrawl
 
-The `@bloon/crawling` package includes the open-source Firecrawl as a git submodule. Self-hosting eliminates cloud credit limits — extraction quality comes from whatever LLM you configure (we reuse the existing `GOOGLE_API_KEY` for Gemini).
+The `@tomo/crawling` package includes the open-source Firecrawl as a git submodule. Self-hosting eliminates cloud credit limits — extraction quality comes from whatever LLM you configure (we reuse the existing `GOOGLE_API_KEY` for Gemini).
 
 **Setup:**
 ```bash
@@ -298,12 +298,12 @@ pnpm firecrawl:stop
 | `packages/crawling/src/poll.ts` | Async job polling |
 | `packages/crawling/src/constants.ts` | Schema, prompt, limits, BLOCKED_PATTERNS, NOT_FOUND_PATTERNS, content selectors |
 | `packages/crawling/src/types.ts` | `FirecrawlExtract`, `FirecrawlConfig` |
-| `packages/crawling/src/index.ts` | Public exports for `@bloon/crawling` package |
+| `packages/crawling/src/index.ts` | Public exports for `@tomo/crawling` package |
 | `packages/crawling/firecrawl/` | Git submodule → github.com/mendableai/firecrawl |
 | `packages/crawling/scripts/start.sh` | Start Browserbase adapter (3003) + Firecrawl API (3002) with env validation |
 | `packages/crawling/scripts/stop.sh` | Stop both processes via PID files or port-based fallback |
 | `packages/crawling/scripts/health.sh` | Health check |
-| `packages/checkout/src/discover.ts` | Scrape + Browserbase+Stagehand discovery (imports `discoverViaFirecrawl` from `@bloon/crawling`) |
+| `packages/checkout/src/discover.ts` | Scrape + Browserbase+Stagehand discovery (imports `discoverViaFirecrawl` from `@tomo/crawling`) |
 | `packages/checkout/tests/e2e-discover.test.ts` | E2E tests for scrape + browser tiers |
 | `packages/crawling/tests/discover.test.ts` | Unit tests for Firecrawl pipeline |
 | `packages/crawling/tests/bulk-url-test.ts` | Bulk URL discovery benchmarks |

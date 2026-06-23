@@ -1,4 +1,4 @@
-# MVP Scope — Bloon v1
+# MVP Scope — Tomo v1
 
 ## One-Liner
 
@@ -18,7 +18,7 @@ REST API that lets AI agents purchase anything on the internet using credit card
 
 - No API keys. No registration. No auth headers.
 - Single operator model — the operator's credit card is configured in `.env`.
-- Any agent that can make HTTP requests can use Bloon immediately.
+- Any agent that can make HTTP requests can use Tomo immediately.
 
 ### Payment Method
 

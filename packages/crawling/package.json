@@ -1,5 +1,5 @@
 {
-  "name": "@bloon/crawling",
+  "name": "@tomo/crawling",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -8,7 +8,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@bloon/core": "workspace:*",
+    "@tomo/core": "workspace:*",
     "playwright-core": "^1.50.0",
     "cheerio": "^1.0.0",
     "exa-js": "^1.5.13",

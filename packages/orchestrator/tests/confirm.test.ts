@@ -2,16 +2,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { Order } from "@bloon/core";
+import type { Order } from "@tomo/core";
 
 // ---- Mock external packages ----
 
-vi.mock("@bloon/checkout", () => ({
+vi.mock("@tomo/checkout", () => ({
   runCheckout: vi.fn(),
   issueAndRevealCard: vi.fn(),
 }));
 
-import { runCheckout, issueAndRevealCard } from "@bloon/checkout";
+import { runCheckout, issueAndRevealCard } from "@tomo/checkout";
 import { confirm } from "../src/confirm.js";
 
 const mockedRunCheckout = vi.mocked(runCheckout);
@@ -44,7 +44,7 @@ function setupConfig(): void {
 
 function makeOrder(overrides: Partial<Order> = {}): Order {
   return {
-    order_id: "bloon_ord_test01",
+    order_id: "tomo_ord_test01",
     status: "awaiting_confirmation",
     product: {
       name: "Test Product",
@@ -79,8 +79,8 @@ function seedOrder(order: Order): void {
 }
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bloon-confirm-test-"));
-  process.env.BLOON_DATA_DIR = tmpDir;
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tomo-confirm-test-"));
+  process.env.TOMO_DATA_DIR = tmpDir;
   setupConfig();
   vi.clearAllMocks();
   mockedIssueCard.mockResolvedValue(FAKE_CARD);
@@ -90,7 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  delete process.env.BLOON_DATA_DIR;
+  delete process.env.TOMO_DATA_DIR;
   delete process.env.FUNDING;
 });
 
@@ -108,7 +108,7 @@ describe("confirm", () => {
       replayUrl: "https://browserbase.com/replay/abc",
     });
 
-    const result = await confirm({ order_id: "bloon_ord_test01" });
+    const result = await confirm({ order_id: "tomo_ord_test01" });
 
     expect(result.receipt.price).toBe("10.00");
     expect(result.receipt.fee).toBe("0.20");
@@ -134,12 +134,50 @@ describe("confirm", () => {
       replayUrl: "",
     });
 
-    await confirm({ order_id: "bloon_ord_test01" });
+    await confirm({ order_id: "tomo_ord_test01" });
 
     expect(mockedIssueCard).not.toHaveBeenCalled();
     expect(mockedRunCheckout).toHaveBeenCalledWith(
       expect.objectContaining({ card: undefined }),
     );
+  });
+
+  it("stopBeforePlaceOrder parks at payment, issues no card, returns no receipt", async () => {
+    const order = makeOrder();
+    seedOrder(order);
+
+    mockedRunCheckout.mockResolvedValue({
+      success: true,
+      finalTotal: "10.20",
+      parkedAtPayment: true,
+      sessionId: "sess_park",
+      replayUrl: "",
+    });
+
+    const result = await confirm({
+      order_id: "tomo_ord_test01",
+      stopBeforePlaceOrder: true,
+    });
+
+    // No spend: the Agentcard is never issued even in agentcard funding mode.
+    expect(mockedIssueCard).not.toHaveBeenCalled();
+    // Browser ran in dry-run with no card.
+    expect(mockedRunCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true, card: undefined }),
+    );
+    // Parked result, no receipt.
+    expect(result.parked).toEqual({
+      at: "payment",
+      observed_total: "10.20",
+      session_id: "sess_park",
+    });
+    expect(result.receipt).toBeUndefined();
+
+    // Order reverted to awaiting_confirmation (not completed) so it can be confirmed for real later.
+    const stored = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "orders.json"), "utf-8"),
+    );
+    expect(stored.orders[0].status).toBe("awaiting_confirmation");
   });
 
   it("confirm expired order throws ORDER_EXPIRED", async () => {
@@ -149,7 +187,7 @@ describe("confirm", () => {
     seedOrder(order);
 
     await expect(
-      confirm({ order_id: "bloon_ord_test01" }),
+      confirm({ order_id: "tomo_ord_test01" }),
     ).rejects.toThrow(expect.objectContaining({ code: "ORDER_EXPIRED" }));
 
     // Verify status updated to expired in store
@@ -176,7 +214,7 @@ describe("confirm", () => {
     });
     seedOrder(order);
 
-    const result = await confirm({ order_id: "bloon_ord_test01" });
+    const result = await confirm({ order_id: "tomo_ord_test01" });
 
     expect(result.receipt).toEqual(existingReceipt);
     // No checkout should have been called
@@ -190,7 +228,7 @@ describe("confirm", () => {
     mockedRunCheckout.mockRejectedValue(new Error("Browser session crashed"));
 
     await expect(
-      confirm({ order_id: "bloon_ord_test01" }),
+      confirm({ order_id: "tomo_ord_test01" }),
     ).rejects.toThrow(expect.objectContaining({ code: "CHECKOUT_FAILED" }));
 
     // Verify order in store has failed status
@@ -215,7 +253,7 @@ describe("confirm", () => {
       replayUrl: "https://browserbase.com/replay/sel",
     });
 
-    const result = await confirm({ order_id: "bloon_ord_test01" });
+    const result = await confirm({ order_id: "tomo_ord_test01" });
 
     expect(result.receipt.order_number).toBe("ORD-SEL-001");
     // Verify selections were forwarded to runCheckout

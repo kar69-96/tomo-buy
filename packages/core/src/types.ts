@@ -190,13 +190,120 @@ export type CheckoutErrorCategory =
   | "session_timeout"
   | "unknown";
 
+// ---- Agent Identities & Connected Accounts ----
+
+/**
+ * A self-owned identity the agent can use to get past login gates on services
+ * that do NOT require the user's personal account. Has its own email (AgentMail
+ * inbox) and a password stored in the vault (referenced, never inlined).
+ */
+export interface AgentIdentity {
+  identity_id: string; // tomo_id_*
+  label: string;
+  email: string; // agent's own email (AgentMail inbox)
+  inbox_id?: string; // AgentMail inbox id backing `email`, when available
+  vault_ref_password?: string; // opaque vault key; the secret never lives here
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * A connection to the user's real email/provider (via Composio). Used both to
+ * decide whether the user already has an account on a service and to read OTP
+ * codes. `status` is "stub" until Composio is actually wired.
+ */
+export interface ConnectedAccount {
+  account_id: string; // tomo_acct_*
+  provider: "composio";
+  email: string;
+  status: "stub" | "connected";
+  domains?: string[]; // services known to be tied to this account
+  created_at: string;
+  updated_at: string;
+}
+
+/** An agent identity's account on one specific site (created on demand). */
+export interface SiteAccount {
+  identity_id: string;
+  domain: string;
+  username: string;
+  vault_ref_password: string;
+  created_at: string;
+}
+
+/** How the browser should get past a login gate. */
+export type LoginStrategy =
+  | "connected_otp" // user's account, log in via OTP read from connected email
+  | "connected_session" // user's account, log in via provided session token/cookies
+  | "agent" // agent identity (own email + vaulted password)
+  | "guest"; // skip login (existing default behavior)
+
+// ---- Planner Runs ----
+
+export type RunStatus =
+  | "planning"
+  | "running"
+  | "awaiting_approval"
+  | "completed"
+  | "failed";
+
+export type GateType = "create_account" | "session_token" | "purchase_confirm";
+
+export interface RunGate {
+  type: GateType;
+  /** Human-readable context for the approval decision (e.g. price breakdown). */
+  details: Record<string, unknown>;
+}
+
+export interface PlanStep {
+  capability: string; // see @tomo/planner capability registry
+  args: Record<string, unknown>;
+  identity_strategy?: LoginStrategy;
+  gate?: GateType;
+}
+
+export interface ExecutionPlan {
+  task: string;
+  steps: PlanStep[];
+}
+
+export interface Run {
+  run_id: string; // tomo_run_*
+  task: string;
+  status: RunStatus;
+  plan?: ExecutionPlan;
+  cursor: number; // index of the next step to execute
+  gate?: RunGate; // present when status === "awaiting_approval"
+  context?: Record<string, unknown>; // accumulated execution state (url, order_id, ...)
+  result?: Record<string, unknown>;
+  error?: OrderError;
+  created_at: string;
+  updated_at: string;
+}
+
 // ---- Store Schemas ----
 
 export interface OrdersStore {
   orders: Order[];
 }
 
-export interface BloonConfig {
+export interface AgentIdentitiesStore {
+  identities: AgentIdentity[];
+}
+
+export interface ConnectedAccountsStore {
+  accounts: ConnectedAccount[];
+}
+
+export interface SiteAccountsStore {
+  site_accounts: SiteAccount[];
+}
+
+export interface RunsStore {
+  runs: Run[];
+}
+
+export interface TomoConfig {
   default_order_expiry_seconds: number;
   port: number;
 }
@@ -246,16 +353,23 @@ export const ErrorCodes = {
   SEARCH_NO_RESULTS: "SEARCH_NO_RESULTS",
   SEARCH_UNAVAILABLE: "SEARCH_UNAVAILABLE",
   SEARCH_RATE_LIMITED: "SEARCH_RATE_LIMITED",
+  IDENTITY_NOT_FOUND: "IDENTITY_NOT_FOUND",
+  LOGIN_FAILED: "LOGIN_FAILED",
+  VAULT_LOCKED: "VAULT_LOCKED",
+  COMPOSIO_NOT_CONNECTED: "COMPOSIO_NOT_CONNECTED",
+  RUN_NOT_FOUND: "RUN_NOT_FOUND",
+  RUN_INVALID_STATE: "RUN_INVALID_STATE",
+  PLAN_FAILED: "PLAN_FAILED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
 
-export class BloonError extends Error {
+export class TomoError extends Error {
   code: ErrorCode;
 
   constructor(code: ErrorCode, message: string) {
     super(message);
-    this.name = "BloonError";
+    this.name = "TomoError";
     this.code = code;
   }
 }

@@ -2,16 +2,17 @@ import {
   type Order,
   type Receipt,
   type CardInfo,
-  BloonError,
+  TomoError,
   ErrorCodes,
   getOrder,
   updateOrder,
   getFundingMode,
   getAgentcardBufferPct,
   getAgentcardMaxAmount,
-} from "@bloon/core";
-import { runCheckout, issueAndRevealCard } from "@bloon/checkout";
-import { selectEngine, runHTTPCheckout, invalidateProfile } from "@bloon/checkout-http";
+} from "@tomo/core";
+import { runCheckout, issueAndRevealCard } from "@tomo/checkout";
+import type { LoginPlan } from "@tomo/checkout";
+import { selectEngine, runHTTPCheckout, invalidateProfile } from "@tomo/checkout-http";
 import { buildReceipt } from "./receipts.js";
 
 /** Compute the dollar amount to fund a single-use card with, from the order. */
@@ -36,20 +37,31 @@ function getDomain(url: string): string {
 
 export interface ConfirmInput {
   order_id: string;
+  /** Optional resolved login strategy to get past a login gate during checkout. */
+  loginPlan?: LoginPlan;
+  /**
+   * No-spend oversight run: drive the real browser through login/cart/shipping to
+   * the payment page, then STOP before placing the order. No Agentcard is issued
+   * and no card is typed, so the run is structurally incapable of spending.
+   */
+  stopBeforePlaceOrder?: boolean;
 }
 
 export interface ConfirmResult {
   order: Order;
-  receipt: Receipt;
+  /** Present on a completed purchase. Absent when parked (stopBeforePlaceOrder). */
+  receipt?: Receipt;
+  /** Present when the run parked at the payment page without spending. */
+  parked?: { at: "payment"; observed_total?: string; session_id: string };
 }
 
 export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
-  const { order_id } = input;
+  const { order_id, loginPlan } = input;
 
   // 1. Look up order
   const order = getOrder(order_id);
   if (!order) {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.ORDER_NOT_FOUND,
       `Order not found: ${order_id}`,
     );
@@ -62,7 +74,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
 
   // 3. Must be awaiting confirmation
   if (order.status !== "awaiting_confirmation") {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.ORDER_INVALID_STATUS,
       `Order ${order_id} cannot be confirmed (status: "${order.status}")`,
     );
@@ -71,7 +83,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
   // 4. Expiry check
   if (new Date(order.expires_at) < new Date()) {
     await updateOrder(order_id, { status: "expired" });
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.ORDER_EXPIRED,
       `Order ${order_id} has expired`,
     );
@@ -84,7 +96,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
   try {
     // 6. Run browser checkout
     if (!order.shipping) {
-      throw new BloonError(
+      throw new TomoError(
         ErrorCodes.SHIPPING_REQUIRED,
         "Shipping info missing on order for browser checkout",
       );
@@ -95,8 +107,10 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
     // 6a. Fund the purchase: issue a single-use Agentcard sized to the order
     //     total (item price + buffer for tax/shipping, capped). Only the opaque
     //     card id is logged — the PAN/CVV/expiry go straight to CDP injection.
+    //     A no-spend oversight run (stopBeforePlaceOrder) NEVER issues a card —
+    //     this is the load-bearing guarantee that the run cannot spend money.
     let card: CardInfo | undefined;
-    if (getFundingMode() === "agentcard") {
+    if (!input.stopBeforePlaceOrder && getFundingMode() === "agentcard") {
       const amount = fundingAmountDollars(order);
       const issued = await issueAndRevealCard(amount);
       card = issued.card;
@@ -107,6 +121,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
     // The HTTP engine uses static credentials, so it's only used when explicitly
     // opted into AND funding is static (debugging).
     const useHttp =
+      !input.stopBeforePlaceOrder &&
       process.env.CHECKOUT_ENGINE === "http" &&
       getFundingMode() === "static" &&
       selectEngine(domain) === "http";
@@ -136,6 +151,8 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
           shipping: order.shipping,
           selections: order.selections,
           card,
+          loginPlan,
+          dryRun: input.stopBeforePlaceOrder,
         });
       }
     } else {
@@ -144,6 +161,8 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
         shipping: order.shipping,
         selections: order.selections,
         card,
+        loginPlan,
+        dryRun: input.stopBeforePlaceOrder,
       });
     }
 
@@ -151,10 +170,25 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
       const isDecline = checkoutResult.errorMessage &&
         (/payment_declined|card_invalid/.test(checkoutResult.errorMessage));
       const code = isDecline ? ErrorCodes.CHECKOUT_DECLINED : ErrorCodes.CHECKOUT_FAILED;
-      throw new BloonError(
+      throw new TomoError(
         code,
         checkoutResult.errorMessage ?? `Checkout did not confirm (session: ${checkoutResult.sessionId})`,
       );
+    }
+
+    // 6c. No-spend oversight run: parked at the payment page. No card was issued
+    //     and no order placed. Revert the order to awaiting_confirmation (so it
+    //     can still be confirmed for real later) and return the observed total.
+    if (input.stopBeforePlaceOrder) {
+      await updateOrder(order_id, { status: "awaiting_confirmation" });
+      return {
+        order,
+        parked: {
+          at: "payment",
+          observed_total: checkoutResult.finalTotal,
+          session_id: checkoutResult.sessionId,
+        },
+      };
     }
 
     // 7. Build receipt
@@ -182,7 +216,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
       },
     });
 
-    if (error instanceof BloonError) throw error;
-    throw new BloonError(ErrorCodes.CHECKOUT_FAILED, errorMessage);
+    if (error instanceof TomoError) throw error;
+    throw new TomoError(ErrorCodes.CHECKOUT_FAILED, errorMessage);
   }
 }

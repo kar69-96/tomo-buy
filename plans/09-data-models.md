@@ -2,7 +2,7 @@
 
 All types live in `packages/core/src/types.ts`.
 
-> **Architecture note:** The blockchain/USDC/wallet/x402 system has been removed. Bloon now uses credit card via browser checkout only.
+> **Architecture note:** The blockchain/USDC/wallet/x402 system has been removed. Tomo now uses credit card via browser checkout only.
 
 ## Order
 
@@ -354,13 +354,13 @@ interface DiscoveryResultWithOptions extends DiscoveryResult {
 ## Store Schemas
 
 ```typescript
-// ~/.bloon/orders.json
+// ~/.tomo/orders.json
 interface OrdersStore {
   orders: Order[];
 }
 
-// ~/.bloon/config.json
-interface BloonConfig {
+// ~/.tomo/config.json
+interface TomoConfig {
   default_order_expiry_seconds: number; // 300
   port: number; // 3000
 }
@@ -419,7 +419,7 @@ const ErrorCodes = {
   PRICE_MISMATCH: "PRICE_MISMATCH",
 } as const;
 
-class BloonError extends Error {
+class TomoError extends Error {
   code: ErrorCode;
   constructor(code: ErrorCode, message: string);
 }

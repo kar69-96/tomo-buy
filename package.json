@@ -1,5 +1,5 @@
 {
-  "name": "bloon",
+  "name": "tomo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,10 +11,10 @@
     "dev": "pnpm build && pnpm start"
   },
   "devDependencies": {
-    "@bloon/api": "workspace:*",
-    "@bloon/checkout": "workspace:*",
-    "@bloon/core": "workspace:*",
-    "@bloon/orchestrator": "workspace:*",
+    "@tomo/api": "workspace:*",
+    "@tomo/checkout": "workspace:*",
+    "@tomo/core": "workspace:*",
+    "@tomo/orchestrator": "workspace:*",
     "@types/node": "^25.3.0",
     "dotenv": "^16.4.0",
     "tsx": "^4.19.0",

@@ -1,11 +1,11 @@
-# Bloon HTTP Checkout Engine — System Specification
+# Tomo HTTP Checkout Engine — System Specification
 
 **Author:** Karthik
 **Status:** Architecture reviewed — ready for implementation
 **Last updated:** 2026-03-19
 **Review:** Engineering review completed 2026-03-19 (10 decisions, 3 critical gaps addressed)
 
-> This document defines the architecture for Bloon's HTTP checkout engine — an **additive** optimization layer that runs alongside the existing Stagehand browser engine. The HTTP engine learns checkout flows on first contact and replays them as pure HTTP on subsequent runs. The Stagehand engine is preserved as a parallel path for A/B testing.
+> This document defines the architecture for Tomo's HTTP checkout engine — an **additive** optimization layer that runs alongside the existing Stagehand browser engine. The HTTP engine learns checkout flows on first contact and replays them as pure HTTP on subsequent runs. The Stagehand engine is preserved as a parallel path for A/B testing.
 >
 > Design priorities: reliability over speed on first run, speed over everything on cached runs, zero LLM calls on the hot path.
 
@@ -101,7 +101,7 @@ Takes HTML (from HTTP response or browser renderer) and produces a structured sn
 
 ### Page Classifier
 
-Takes the structured snapshot and determines which funnel stage the page represents. Uses signal constants shared with the Stagehand engine's `detectPageType()` (from `@bloon/core/classification-signals`).
+Takes the structured snapshot and determines which funnel stage the page represents. Uses signal constants shared with the Stagehand engine's `detectPageType()` (from `@tomo/core/classification-signals`).
 
 Rule-based first, LLM fallback for low-confidence cases. Classification signals (text patterns, URL patterns, field selectors) live in `packages/core/src/classification-signals.ts` — shared between both engines.
 
@@ -109,7 +109,7 @@ Rule-based first, LLM fallback for low-confidence cases. Classification signals 
 
 ### Site Profile Cache
 
-JSON file storage keyed by domain (in `~/.bloon/profiles/`). Stores the complete `SiteProfile` — see type definition in `packages/core/src/site-profile.ts`. Read before every purchase. Written after every successful first run.
+JSON file storage keyed by domain (in `~/.tomo/profiles/`). Stores the complete `SiteProfile` — see type definition in `packages/core/src/site-profile.ts`. Read before every purchase. Written after every successful first run.
 
 ### Flow Executor
 
@@ -429,7 +429,7 @@ Wait the Retry-After duration (or exponential backoff). Retry. If repeated 429s,
 - Cache management
 - SPA detection scoring
 
-> **Design decision:** The LLM boundary is the most important architectural choice. By confining LLM usage to first-run analysis only, steady-state cost is purely infrastructure (HTTP requests + JSON file reads). This separates Bloon from browser-only automation tools that burn tokens on every checkout.
+> **Design decision:** The LLM boundary is the most important architectural choice. By confining LLM usage to first-run analysis only, steady-state cost is purely infrastructure (HTTP requests + JSON file reads). This separates Tomo from browser-only automation tools that burn tokens on every checkout.
 
 ---
 

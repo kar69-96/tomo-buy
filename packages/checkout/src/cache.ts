@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { DomainCache } from "@bloon/core";
+import type { DomainCache } from "@tomo/core";
 import type { Page } from "playwright";
 
 // ---- CDP cookie response type ----
@@ -51,7 +51,7 @@ export function extractDomain(url: string): string {
 
 function getCacheDir(): string {
   const dataDir =
-    process.env.BLOON_DATA_DIR || path.join(os.homedir(), ".bloon");
+    process.env.TOMO_DATA_DIR || path.join(os.homedir(), ".tomo");
   return path.join(dataDir, "cache");
 }
 

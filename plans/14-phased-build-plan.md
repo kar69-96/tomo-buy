@@ -1,6 +1,6 @@
-# Phased Build Plan — Bloon v1
+# Phased Build Plan — Tomo v1
 
-> **NOTICE (2026-03):** Bloon has migrated to a credit-card-only architecture. The blockchain/USDC/wallet/x402 system has been completely removed. The following phases are **superseded** and no longer applicable:
+> **NOTICE (2026-03):** Tomo has migrated to a credit-card-only architecture. The blockchain/USDC/wallet/x402 system has been completely removed. The following phases are **superseded** and no longer applicable:
 > - **Phase 2** (Wallet Management) — wallets, USDC balance, QR codes, transfers
 > - **Phase 3** (x402 Detection & Payment) — x402 route detection, crypto payments
 > - **Phase 7** (Coinbase Onramp + E2E on Mainnet) — Coinbase Onramp, mainnet USDC, on-chain verification
@@ -60,7 +60,7 @@ wallet/create.ts, wallet/balance.ts, wallet/transfer.ts, wallet/qr.ts
 
 ## Phase 3: x402 Detection & Payment (45 min)
 
-Detect x402 endpoints, pay from Bloon wallet, get response.
+Detect x402 endpoints, pay from Tomo wallet, get response.
 
 ### Deliverables
 
@@ -125,7 +125,7 @@ checkout/task.ts, checkout/session.ts, checkout/credentials.ts, checkout/fill.ts
 
 **Domain cache:**
 ```
-[ ] First visit creates ~/.bloon/cache/{domain}.json
+[ ] First visit creates ~/.tomo/cache/{domain}.json
 [ ] Second visit injects cached cookies
 [ ] No auth tokens in cache
 ```
@@ -313,7 +313,7 @@ Switch to `NETWORK=base` and run with real USDC. Use small amounts ($5-10).
 [ ] Coinbase Onramp live flow completes (mainnet)
 [ ] NETWORK env var switches testnet/mainnet cleanly
 [ ] USDC contract selected by network
-[ ] ~/.bloon/ has 600 permissions
+[ ] ~/.tomo/ has 600 permissions
 [ ] .env.example is complete (includes CDP keys)
 [ ] Funding page works in mobile browser
 [ ] Funding page shows both Onramp + QR code paths

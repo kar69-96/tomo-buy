@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import type { Order, ShippingInfo } from "@bloon/core";
+import type { Order, ShippingInfo } from "@tomo/core";
 import {
   buildCredentials,
   getStagehandVariables,
@@ -33,6 +33,10 @@ import {
 } from "./scripted-actions.js";
 import type { PageType } from "./scripted-actions.js";
 import { getOrCreateInbox, getAgentEmail, pollForVerificationCode } from "./agentmail.js";
+import { executeLogin, seedSessionCookies } from "./login.js";
+import type { LoginPlan } from "./login.js";
+import { makeTracerFromEnv } from "./trace.js";
+import type { TraceMode } from "./trace.js";
 
 // ---- Checkout steps ----
 
@@ -73,10 +77,12 @@ export interface CheckoutResult {
   replayUrl: string;
   failedStep?: CheckoutStep;
   errorMessage?: string;
-  errorCategory?: import("@bloon/core").CheckoutErrorCategory;
+  errorCategory?: import("@tomo/core").CheckoutErrorCategory;
   diagnosticScreenshotPath?: string;
   checkpoints?: CheckoutCheckpoints;
   durationMs?: number;
+  /** True when a dry run reached the payment page and stopped before placing the order. */
+  parkedAtPayment?: boolean;
 }
 
 export interface CheckoutInput {
@@ -86,7 +92,14 @@ export interface CheckoutInput {
   dryRun?: boolean;
   sessionOptions?: SessionOptions;
   /** Single-use card to inject (Agentcard). Falls back to the .env card if omitted. */
-  card?: import("@bloon/core").CardInfo;
+  card?: import("@tomo/core").CardInfo;
+  /**
+   * Resolved login strategy + credentials for getting past a login gate. When
+   * omitted (or strategy "guest"), the loop keeps its guest-checkout behavior.
+   * Card-style trust boundary: any password/token here is filled directly, never
+   * sent to the LLM.
+   */
+  loginPlan?: LoginPlan;
 }
 
 // ---- Error classification ----
@@ -110,7 +123,7 @@ type CheckoutPhase =
 export function classifyError(
   errorMessage: string,
   pageText: string,
-): import("@bloon/core").CheckoutErrorCategory {
+): import("@tomo/core").CheckoutErrorCategory {
   const msg = errorMessage.toLowerCase();
   const text = pageText.toLowerCase();
 
@@ -379,8 +392,10 @@ function buildPageInstruction(
         // First attempt: select options
         return `${ctx}Select exactly these options: ${Object.entries(selections).map(([k, v]) => `${k}: ${v}`).join(", ")}. After selecting, click "Add to Cart" or "Add to Bag".`;
       }
-      // No selections — just add to cart.
-      return `${ctx}Click "Add to Cart", "Add to Bag", or "Buy Now". Do NOT browse or select any product options.`;
+      // No pre-set selections — add to cart, but many products require a size/variant
+      // before "Add to Cart" enables. Allow choosing the first in-stock option, while
+      // discouraging unrelated browsing.
+      return `${ctx}${stallHint}Add this item to the cart. If the "Add to Cart"/"Add to Bag" button is disabled or does nothing when clicked, a required option is unselected — pick the first available/in-stock size or variant, then click "Add to Cart", "Add to Bag", or "Buy Now". Keep the current color; do not navigate to other products.`;
     }
 
     case "cart":
@@ -475,6 +490,9 @@ export async function runCheckout(
   const session = await createSession(input.sessionOptions);
   const startMs = Date.now();
 
+  // 4b. Optional deep tracer (JSONL + screenshots) — no-op unless CHECKOUT_TRACE_DIR set.
+  const tracer = makeTracerFromEnv(session.id);
+
   try {
     // 5. The page the checkout loop drives
     const page: Page = session.page;
@@ -487,6 +505,11 @@ export async function runCheckout(
       } catch {
         // best-effort cookie restore
       }
+    }
+
+    // 6b. Seed login session cookies (session-token strategy) before navigation
+    if (input.loginPlan?.sessionCookies?.length) {
+      await seedSessionCookies(session.context, input.loginPlan.sessionCookies);
     }
 
     // 7. Navigate to product URL
@@ -605,6 +628,12 @@ export async function runCheckout(
       state.currentStep = pageTypeToStep(pageType);
       console.log(`[page ${pageIdx}] type=${pageType} url=${page.url().slice(0, 80)}`);
 
+      // 9c-trace. Snapshot the page on entry and advance the step tracker.
+      tracer?.stepTracker.setStep(state.currentStep);
+      const shot = await tracer?.snapshot(page, `${pageIdx}-${pageType}`);
+      let iterMode: TraceMode = "scripted";
+      let iterAction = `page:${pageType}`;
+
       // 9d. Run page-type handler (all scripted, 0 LLM)
       let advanced = false;
 
@@ -711,22 +740,44 @@ export async function runCheckout(
             break;
           }
 
-          // Check for out-of-stock / unavailable variant before trying ATC
+          // Check for out-of-stock / unavailable variant before trying ATC.
+          // An ENABLED add-to-cart/buy-now control means the product is purchasable,
+          // so it overrides stray "notify me"/"sold out" text elsewhere on the page
+          // (e.g. a back-in-stock widget for a different color/size swatch). Only when
+          // there is no purchasable control AND an unavailable signal do we bail.
           const isUnavailable = await page.evaluate(() => {
+            const atcLabels = [
+              "add to cart", "add to bag", "add to basket",
+              "buy now", "ship it", "deliver it",
+            ];
             const unavailableTexts = [
               "option not available", "sold out", "out of stock",
               "unavailable", "notify me", "coming soon", "not available",
               "currently out", "temporarily out",
             ];
-            // Check all buttons and submit inputs for unavailable signals
-            const allButtons = document.querySelectorAll('button, input[type="submit"]');
-            for (const btn of allButtons) {
-              const text = (btn.textContent || "").trim().toLowerCase();
-              const value = ((btn as HTMLInputElement).value || "").toLowerCase();
-              const combined = `${text} ${value}`;
-              if (unavailableTexts.some(s => combined.includes(s))) {
-                return text || value || "unavailable";
-              }
+            const controls = Array.from(
+              document.querySelectorAll('button, input[type="submit"], [role="button"]'),
+            );
+            const labelOf = (el: Element): string => {
+              const value = el instanceof HTMLInputElement ? el.value : "";
+              return `${(el.textContent || "").trim()} ${value}`.toLowerCase();
+            };
+            const isDisabled = (el: Element): boolean =>
+              (el as HTMLButtonElement | HTMLInputElement).disabled === true ||
+              el.getAttribute("aria-disabled") === "true";
+
+            // A purchasable control present and enabled → in stock.
+            const hasEnabledAtc = controls.some((el) => {
+              const label = labelOf(el);
+              return atcLabels.some((a) => label.includes(a)) && !isDisabled(el);
+            });
+            if (hasEnabledAtc) return null;
+
+            // No purchasable control — surface the first explicit unavailable signal.
+            for (const el of controls) {
+              const label = labelOf(el);
+              const hit = unavailableTexts.find((s) => label.includes(s));
+              if (hit) return hit;
             }
             return null;
           });
@@ -813,6 +864,20 @@ export async function runCheckout(
         }
 
         case "login-gate": {
+          // If an identity strategy was resolved upstream, log in with it.
+          const loginResult = await executeLogin(
+            page,
+            session.context,
+            input.loginPlan,
+          );
+          if (loginResult.handled) {
+            console.log(`  [login] ${loginResult.note ?? input.loginPlan?.strategy}`);
+            iterMode = "login";
+            iterAction = `login:${loginResult.note ?? input.loginPlan?.strategy ?? "unknown"}`;
+            advanced = loginResult.advanced;
+            break;
+          }
+          // Otherwise fall back to guest checkout (default behavior).
           advanced =
             await scriptedClickButton(page, "guest checkout") ||
             await scriptedClickButton(page, "continue as guest") ||
@@ -927,7 +992,9 @@ export async function runCheckout(
             await page.waitForTimeout(2000);
           }
 
-          if (!state.cardFilled) {
+          // Dry run (no-spend oversight): never type a card. Skip the entire
+          // card/billing fill and go straight to the parked-at-payment return.
+          if (!input.dryRun && !state.cardFilled) {
             // Uncheck billing same as shipping
             await scriptedUncheckBillingSameAsShipping(page);
             await page.waitForTimeout(500);
@@ -953,11 +1020,28 @@ export async function runCheckout(
           }
 
           if (input.dryRun) {
-            // Dry run: extract total and stop
+            // Dry run: extract total and stop — parked at the payment page,
+            // no card issued, no order placed.
             const total = await extractVisibleTotal(page);
             state.confirmationData = { total };
-            console.log(`  [dry-run] total=${total ?? "(not found)"}`);
+            state.currentStep = "place-order";
+            console.log(`  [dry-run] PARKED at payment, total=${total ?? "(not found)"}`);
             advanced = true; // Signal completion
+            tracer?.stepTracker.setStep("place-order");
+            const parkedShot = await tracer?.snapshot(page, "PARKED-payment");
+            tracer?.record({
+              pageIndex: pageIdx,
+              url: page.url(),
+              pageType,
+              action: "parked-before-place-order",
+              mode: "navigate",
+              loginStrategy: input.loginPlan?.strategy,
+              advanced: true,
+              llmCalls: state.llmCalls,
+              screenshot: parkedShot,
+              note: `observed_total=${total ?? "(not found)"}`,
+              outcome: "pass",
+            });
             // Return early for dry run — don't place order
             const durationMs = Date.now() - startMs;
             // Save domain cache before returning
@@ -969,6 +1053,7 @@ export async function runCheckout(
             return {
               success: true,
               finalTotal: total,
+              parkedAtPayment: true,
               sessionId: session.id,
               replayUrl: session.replayUrl,
               durationMs,
@@ -1077,6 +1162,21 @@ export async function runCheckout(
         }
       }
 
+      // 9d-trace. Record the scripted handler outcome for this page.
+      tracer?.record({
+        pageIndex: pageIdx,
+        url: page.url(),
+        pageType,
+        action: iterAction,
+        mode: iterMode,
+        loginStrategy: input.loginPlan?.strategy,
+        advanced,
+        stallCount: state.stallCount,
+        llmCalls: state.llmCalls,
+        screenshot: shot,
+        outcome: advanced ? "pass" : undefined,
+      });
+
       // 9e. Stall detection — track URL + page type to detect no-progress loops
       const currentUrl = page.url();
       if (currentUrl === state.lastUrl && pageType === state.lastPageType) {
@@ -1145,6 +1245,17 @@ export async function runCheckout(
         const instruction = buildPageInstruction(pageType, input, state, isStalled);
 
         console.log(`  [llm fallback ${state.llmCalls + 1}/${MAX_LLM_CALLS}${isStalled ? " STALLED" : ""}] ${instruction.slice(0, 100)}...`);
+        tracer?.record({
+          pageIndex: pageIdx,
+          url: page.url(),
+          pageType,
+          action: `llm-act:${instruction.slice(0, 80)}`,
+          mode: "llm",
+          loginStrategy: input.loginPlan?.strategy,
+          stallCount: state.stallCount,
+          llmCalls: state.llmCalls + 1,
+          note: isStalled ? "stalled" : undefined,
+        });
 
         try {
           await playwrightAct(page, instruction, { variables: stagehandVars });

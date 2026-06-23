@@ -343,7 +343,7 @@ After every test run:
 [ ] Stagehand LLM logs show only %var% placeholders for all sensitive fields
 [ ] Card fills appear only in CDP/Playwright logs
 [ ] No credentials in API response bodies
-[ ] No credentials written to disk (~/.bloon/)
+[ ] No credentials written to disk (~/.tomo/)
 [ ] No credentials in Browserbase session logs (verify via replay)
 [ ] Login credentials not persisted after session destroy
 ```
@@ -386,7 +386,7 @@ For sites with Google Places or similar autocomplete:
 ### TC-10: Domain Cache (Repeat Visits)
 
 ```
-[ ] First visit to site → domain cache created (~/.bloon/cache/{domain}.json)
+[ ] First visit to site → domain cache created (~/.tomo/cache/{domain}.json)
 [ ] Cache contains cookies (consent state, preferences)
 [ ] Cache does NOT contain session tokens or auth cookies
 [ ] Second visit → cache injected before navigation

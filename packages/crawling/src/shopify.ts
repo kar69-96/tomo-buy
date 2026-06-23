@@ -1,4 +1,4 @@
-import type { ProductOption } from "@bloon/core";
+import type { ProductOption } from "@tomo/core";
 import type { FirecrawlExtract } from "./types.js";
 import { stripCurrencySymbol } from "./helpers.js";
 

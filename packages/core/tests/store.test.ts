@@ -37,19 +37,19 @@ function makeOrder(overrides: Partial<Order> = {}): Order {
 }
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bloon-test-"));
-  process.env.BLOON_DATA_DIR = tmpDir;
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tomo-test-"));
+  process.env.TOMO_DATA_DIR = tmpDir;
 });
 
 afterEach(() => {
-  delete process.env.BLOON_DATA_DIR;
+  delete process.env.TOMO_DATA_DIR;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe("generateId", () => {
   it("generates IDs with correct prefix format", () => {
     const id = generateId("w");
-    expect(id).toMatch(/^bloon_w_[a-z0-9]{6}$/);
+    expect(id).toMatch(/^tomo_w_[a-z0-9]{6}$/);
   });
 
   it("generates unique IDs", () => {

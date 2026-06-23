@@ -10,7 +10,7 @@
  *   3. Body content signals (out of stock, sold out)
  */
 
-import type { CheckoutErrorCategory } from "@bloon/core";
+import type { CheckoutErrorCategory } from "@tomo/core";
 
 // ---- Types ----
 

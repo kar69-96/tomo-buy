@@ -2,12 +2,12 @@ import { describe, it, expect, vi } from "vitest";
 
 // ---- Mock external packages ----
 
-vi.mock("@bloon/crawling", () => ({
+vi.mock("@tomo/crawling", () => ({
   classifyUrl: vi.fn().mockReturnValue("exa_first"),
   discoverWithStrategy: vi.fn(),
 }));
 
-import { discoverWithStrategy } from "@bloon/crawling";
+import { discoverWithStrategy } from "@tomo/crawling";
 import { query } from "../src/query.js";
 
 const mockedDiscoverWithStrategy = vi.mocked(discoverWithStrategy);

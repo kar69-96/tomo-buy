@@ -14,8 +14,8 @@ import type {
   DynamicValue,
   HttpMethod,
   PageType,
-} from "@bloon/core";
-import { DEFAULT_PROFILE_TTL_MS } from "@bloon/core";
+} from "@tomo/core";
+import { DEFAULT_PROFILE_TTL_MS } from "@tomo/core";
 import { generateFingerprint } from "./fingerprint.js";
 import type { FetchResult } from "./types.js";
 

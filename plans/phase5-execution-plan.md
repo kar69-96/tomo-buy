@@ -4,12 +4,12 @@
 
 ## Circular Dependency Solution
 
-Spec says put files in `packages/core/src/`, but `buy.ts`/`confirm.ts` need `@bloon/wallet`, `@bloon/x402`, `@bloon/checkout` — which already depend on `@bloon/core`. Circular dep breaks the build.
+Spec says put files in `packages/core/src/`, but `buy.ts`/`confirm.ts` need `@tomo/wallet`, `@tomo/x402`, `@tomo/checkout` — which already depend on `@tomo/core`. Circular dep breaks the build.
 
-**Solution:** New package `packages/orchestrator/` (`@bloon/orchestrator`).
-- Depends on: `@bloon/core`, `@bloon/wallet`, `@bloon/x402`, `@bloon/checkout`
+**Solution:** New package `packages/orchestrator/` (`@tomo/orchestrator`).
+- Depends on: `@tomo/core`, `@tomo/wallet`, `@tomo/x402`, `@tomo/checkout`
 - Clean acyclic graph: `core → wallet/x402/checkout → orchestrator`
-- Phase 6 API imports from `@bloon/orchestrator`
+- Phase 6 API imports from `@tomo/orchestrator`
 
 ---
 

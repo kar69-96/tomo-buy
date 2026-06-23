@@ -1,4 +1,4 @@
-import type { ProductOption } from "@bloon/core";
+import type { ProductOption } from "@tomo/core";
 import { getFirecrawlConfig } from "./client.js";
 import { stripCurrencySymbol, mapOptions, isValidPrice, cleanExtractField, extractSlugWords, computeUrlProductOverlap } from "./helpers.js";
 import { chooseBestCandidate, type CandidateInput } from "./parser-ensemble.js";

@@ -1,4 +1,4 @@
-# Roadmap — Bloon
+# Roadmap — Tomo
 
 ## v1.0 — Core API (Current Build)
 
@@ -15,7 +15,7 @@ REST API on localhost. Any URL → credit card checkout → receipt.
 - 12-step browser checkout with Stagehand agent + custom tools (fillShippingInfo, fillCardFields, fillBillingAddress)
 - Fresh Browserbase sessions with domain-level page caching
 - `orchestrator` package separates business logic from transport layer
-- JSON file storage (~/.bloon/) with atomic writes
+- JSON file storage (~/.tomo/) with atomic writes
 - Closed source
 
 ---
@@ -34,7 +34,7 @@ REST API on localhost. Any URL → credit card checkout → receipt.
 
 ## v2.0 — Platform
 
-- **MCP wrapper** — expose the REST API as an MCP server so agents in Claude Desktop / Cursor can use Bloon natively
+- **MCP wrapper** — expose the REST API as an MCP server so agents in Claude Desktop / Cursor can use Tomo natively
 - **Spending dashboard & frontend** — React UI with transaction history, spending analytics (by merchant, time), budget controls, live checkout activity feed, and receipt viewer. Read-only in v2, write ops in v2.5
 - **PostgreSQL** — replace JSON files with a real database
 - **Deploy to cloud** — hosted version with HTTPS, custom domains

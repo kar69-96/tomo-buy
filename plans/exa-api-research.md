@@ -1,7 +1,7 @@
 # Exa.ai API Research Report
 
 > Compiled: 2026-03-05
-> Purpose: Integration evaluation for product discovery tier in Bloon's e-commerce API
+> Purpose: Integration evaluation for product discovery tier in Tomo's e-commerce API
 
 ---
 
@@ -16,7 +16,7 @@
 7. [TypeScript SDK](#7-typescript-sdk)
 8. [Content Types Returned](#8-content-types-returned)
 9. [Best Practices for Product Data Extraction](#9-best-practices-for-product-data-extraction)
-10. [Integration Recommendations for Bloon](#10-integration-recommendations-for-bloon)
+10. [Integration Recommendations for Tomo](#10-integration-recommendations-for-tomo)
 
 ---
 
@@ -663,7 +663,7 @@ import type {
 | Bundle size | Small (minimal deps) | Zero additional deps |
 | Flexibility | Covers all endpoints | Full control over requests |
 
-**Recommendation for Bloon:** Use the SDK. The type safety and convenience methods justify the minimal dependency. The SDK is MIT-licensed and actively maintained.
+**Recommendation for Tomo:** Use the SDK. The type safety and convenience methods justify the minimal dependency. The SDK is MIT-licensed and actively maintained.
 
 ---
 
@@ -826,7 +826,7 @@ function parseProductSummary(summary: string | undefined): Partial<Product> | nu
 }
 ```
 
-5. **Use `text` as fallback** -- if summary extraction fails, fall back to parsing the markdown text with your own LLM (Gemini Flash, as Bloon already uses it).
+5. **Use `text` as fallback** -- if summary extraction fails, fall back to parsing the markdown text with your own LLM (Gemini Flash, as Tomo already uses it).
 
 6. **Domain filtering is powerful** -- `includeDomains` with known e-commerce sites dramatically improves result quality. Exa supports up to 1200 domains.
 
@@ -836,11 +836,11 @@ function parseProductSummary(summary: string | undefined): Partial<Product> | nu
 
 ---
 
-## 10. Integration Recommendations for Bloon
+## 10. Integration Recommendations for Tomo
 
 ### Architecture: Exa as Discovery Tier
 
-Exa fits naturally as a tier in Bloon's 3-tier discovery pipeline (per `plans/17-query-endpoint.md`):
+Exa fits naturally as a tier in Tomo's 3-tier discovery pipeline (per `plans/17-query-endpoint.md`):
 
 ```
 Tier 1: Firecrawl (primary, direct URL scraping)
@@ -920,7 +920,7 @@ export async function searchProducts(query: string, domains?: string[]) {
 
 ### Cost Impact
 
-At Bloon's expected v1 volume (~100 requests/day):
+At Tomo's expected v1 volume (~100 requests/day):
 - Search: ~$0.70/day ($21/month)
 - Contents: ~$0.10/day ($3/month)
 - **Total: ~$24/month** (well within Starter tier at $49/month)

@@ -10,7 +10,7 @@
  *   2. confirmPaymentIntent — confirm a pi_ with a pm_
  */
 
-import type { CardInfo } from "@bloon/core";
+import type { CardInfo } from "@tomo/core";
 
 // ---- Constants ----
 

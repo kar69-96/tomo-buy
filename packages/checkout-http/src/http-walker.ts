@@ -23,7 +23,7 @@
  * └──────────────────────────────────────────────────────┘
  */
 
-import type { ShippingInfo } from "@bloon/core";
+import type { ShippingInfo } from "@tomo/core";
 import type { TraceStep, WalkerTrace } from "./profile-builder.js";
 import type { FetchResult, SessionState, PageSnapshot } from "./types.js";
 import { createSessionState } from "./session-manager.js";

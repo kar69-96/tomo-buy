@@ -1,6 +1,6 @@
 # Coinbase Onramp — Guest Checkout Integration
 
-Bloon uses **Coinbase Onramp with Guest Checkout** to let users fund wallets with USDC on Base — no Coinbase account required, no KYC managed by Bloon, and **zero fees on USDC/Base purchases** (with approved access).
+Tomo uses **Coinbase Onramp with Guest Checkout** to let users fund wallets with USDC on Base — no Coinbase account required, no KYC managed by Tomo, and **zero fees on USDC/Base purchases** (with approved access).
 
 ---
 
@@ -44,14 +44,14 @@ For users **not logged into a Coinbase account**. Automatically directed to this
 ### User Flow
 
 ```
-User opens Bloon funding page (/fund/:token)
+User opens Tomo funding page (/fund/:token)
   -> Sees Coinbase Onramp widget (embedded)
   -> Not logged into Coinbase -> enters Guest Checkout automatically
   -> Enters debit card OR taps Apple Pay
   -> Enters phone number (US) for verification
   -> Confirms purchase amount
-  -> USDC sent directly to Bloon wallet address on Base
-  -> Bloon detects deposit on-chain -> wallet funded
+  -> USDC sent directly to Tomo wallet address on Base
+  -> Tomo detects deposit on-chain -> wallet funded
 ```
 
 With Apple Pay, the entire flow takes **seconds**.
@@ -60,7 +60,7 @@ With Apple Pay, the entire flow takes **seconds**.
 
 ## Integration Options
 
-### Option 1: One-Click-Buy URL (Recommended for Bloon)
+### Option 1: One-Click-Buy URL (Recommended for Tomo)
 
 Generate a pre-filled URL server-side. If user has no Coinbase session, lands in Guest Checkout automatically. Works with any frontend (no React dependency).
 
@@ -76,7 +76,7 @@ curl -X POST 'https://api.developer.coinbase.com/onramp/v1/token' \
   -H 'Content-Type: application/json' \
   -d '{
     "addresses": [{
-      "address": "0x<BLOON_WALLET_ADDRESS>",
+      "address": "0x<TOMO_WALLET_ADDRESS>",
       "blockchains": ["base"]
     }],
     "assets": ["USDC"]
@@ -123,7 +123,7 @@ import { FundCard } from '@coinbase/onchainkit/fund';
 <FundCard />
 ```
 
-Requires CDP Project ID + OnchainKit API Key. Only useful if funding page becomes a React app (not current Bloon architecture).
+Requires CDP Project ID + OnchainKit API Key. Only useful if funding page becomes a React app (not current Tomo architecture).
 
 ### Option 3: Create Onramp Session API
 
@@ -134,7 +134,7 @@ curl -X POST 'https://api.developer.coinbase.com/onramp/v2/session' \
   -H 'Authorization: Bearer <CDP_JWT>' \
   -H 'Content-Type: application/json' \
   -d '{
-    "destinationAddress": "0x<BLOON_WALLET_ADDRESS>",
+    "destinationAddress": "0x<TOMO_WALLET_ADDRESS>",
     "destinationNetwork": "base",
     "purchaseCurrency": "USDC",
     "paymentAmount": "50.00",
@@ -153,7 +153,7 @@ Returns `session.onrampUrl` + `quote` (pricing breakdown).
 
 ```
 +--------------------------------------------------+
-|           Fund Your Bloon Wallet                  |
+|           Fund Your Tomo Wallet                  |
 |                                                   |
 |  +---------------------------------------------+ |
 |  |                                             | |
@@ -185,12 +185,12 @@ Two paths, same destination:
 
 ## Deposit Detection
 
-After the user completes the Onramp flow, Bloon detects the deposit:
+After the user completes the Onramp flow, Tomo detects the deposit:
 
 **Option A: On-chain monitoring (recommended for v1)**
 - Watch for USDC transfers to the wallet address via viem + Base RPC
 - Works for both Onramp deposits AND direct transfers
-- Simplest — Bloon already has this infrastructure (balance polling on funding page)
+- Simplest — Tomo already has this infrastructure (balance polling on funding page)
 
 **Option B: Webhooks (future)**
 - Subscribe to Coinbase Onramp webhooks for real-time status updates
@@ -203,7 +203,7 @@ After the user completes the Onramp flow, Bloon detects the deposit:
 
 ---
 
-## Implementation in Bloon
+## Implementation in Tomo
 
 ### What Changes
 
@@ -237,7 +237,7 @@ GET /fund/:token/onramp-session
 - Backend generates session tokens (CDP API keys never exposed to client)
 - Backend signs JWT with CDP API keys using ES256
 - Session tokens are single-use and short-lived
-- No user identity data stored by Bloon
+- No user identity data stored by Tomo
 
 ---
 
@@ -284,7 +284,7 @@ GET /fund/:token/onramp-session
 
 ## Legal
 
-Users must accept Coinbase's Guest Checkout Terms of Service, User Agreement, and Privacy Policy. Bloon must inform users they are agreeing to these policies when proceeding with payment.
+Users must accept Coinbase's Guest Checkout Terms of Service, User Agreement, and Privacy Policy. Tomo must inform users they are agreeing to these policies when proceeding with payment.
 
 ---
 

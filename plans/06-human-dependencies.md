@@ -1,4 +1,4 @@
-# Human Dependencies — Bloon v1
+# Human Dependencies — Tomo v1
 
 Things the human operator needs to set up or provide before/during the build.
 

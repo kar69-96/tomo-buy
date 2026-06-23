@@ -12,8 +12,8 @@
  */
 
 import * as cheerio from "cheerio";
-import type { ResponseFingerprint } from "@bloon/core";
-import { FINGERPRINT_SIMILARITY_THRESHOLD } from "@bloon/core";
+import type { ResponseFingerprint } from "@tomo/core";
+import { FINGERPRINT_SIMILARITY_THRESHOLD } from "@tomo/core";
 import type { FetchResult } from "./types.js";
 
 // ---- Fingerprint generation ----

@@ -6,7 +6,7 @@ import {
   getStagehandVariables,
   getCdpCredentials,
 } from "../src/credentials.js";
-import type { ShippingInfo } from "@bloon/core";
+import type { ShippingInfo } from "@tomo/core";
 
 // Set up card/billing env vars for tests
 const CARD_ENV = {

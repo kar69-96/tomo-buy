@@ -12,7 +12,7 @@
  *   - "full_browser" -> Needs full Stagehand (JS challenges, CAPTCHAs)
  */
 
-import type { BotProtectionLevel } from "@bloon/core";
+import type { BotProtectionLevel } from "@tomo/core";
 import type { FetchResult } from "./types.js";
 
 /**

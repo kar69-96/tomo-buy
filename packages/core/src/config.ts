@@ -3,7 +3,7 @@ import type {
   CardInfo,
   BillingInfo,
   ShippingInfo,
-  BloonConfig,
+  TomoConfig,
 } from "./types.js";
 import { getConfig, saveConfig } from "./store.js";
 
@@ -38,6 +38,32 @@ export function getAgentcardBufferPct(): number {
 export function getAgentcardMaxAmount(): number {
   const v = Number(process.env.AGENTCARD_MAX_AMOUNT);
   return Number.isFinite(v) && v > 0 ? v : 500;
+}
+
+// ---- Identity / vault / planner ----
+
+/**
+ * Symmetric key used to encrypt the local secret vault (~/.tomo/vault.json).
+ * Returns null when unset; the vault fails fast (VAULT_LOCKED) only when a
+ * secret is actually requested, so card-only flows never need it.
+ */
+export function getVaultKey(): string | null {
+  return process.env.VAULT_KEY || null;
+}
+
+/** Composio API key (optional; the client is stubbed until wired). */
+export function getComposioKey(): string | null {
+  return process.env.COMPOSIO_API_KEY || null;
+}
+
+/** Model for the planning agent; defaults to the discovery/intent model. */
+export function getPlannerModel(): string {
+  return (
+    process.env.PLANNER_MODEL ||
+    process.env.INTENT_MODEL ||
+    process.env.AGENT_MODEL ||
+    "openai/gpt-4o-mini"
+  );
 }
 
 // ---- Credential accessors ----
@@ -77,11 +103,11 @@ export function getDefaultShipping(): ShippingInfo | undefined {
 
 // ---- Config management ----
 
-export function loadConfig(): BloonConfig {
+export function loadConfig(): TomoConfig {
   const existing = getConfig();
   if (existing) return existing;
 
-  const config: BloonConfig = {
+  const config: TomoConfig = {
     default_order_expiry_seconds: 300,
     port: getPort(),
   };

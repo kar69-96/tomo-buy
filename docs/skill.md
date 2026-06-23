@@ -1,11 +1,11 @@
 ---
-name: bloon
+name: tomo
 version: 2.0.0
 description: Purchase anything on the internet via browser checkout. Any URL. No API keys. No registration.
 metadata: {"category":"commerce","interface":"rest","auth":"none"}
 ---
 
-# BLOON API QUICK REFERENCE v2.0.0
+# TOMO API QUICK REFERENCE v2.0.0
 
 **Base:** `http://localhost:3000`
 **Auth:** None. Single operator mode.
@@ -16,6 +16,8 @@ metadata: {"category":"commerce","interface":"rest","auth":"none"}
 - `POST /api/query` — discover product options and required fields
 - `POST /api/buy` — get purchase quote for any URL
 - `POST /api/confirm` — execute purchase, get receipt
+- `POST /api/run` — plan + run an account-gated task (chooses agent identity vs your account)
+- `POST /api/run/:id/approve` — approve a paused run's gate (create account / session token / purchase)
 
 ## Rules:
 
@@ -28,7 +30,7 @@ metadata: {"category":"commerce","interface":"rest","auth":"none"}
 
 ---
 
-# Bloon API -- Agent Skills Guide
+# Tomo API -- Agent Skills Guide
 
 No API keys. No registration. No auth headers. Just HTTP requests.
 
@@ -64,7 +66,7 @@ Returns a quote with price, fee, total. Does NOT charge anything yet.
 ```bash
 curl -X POST http://localhost:3000/api/confirm \
   -H "Content-Type: application/json" \
-  -d '{"order_id":"bloon_ord_9x2k4m"}'
+  -d '{"order_id":"tomo_ord_9x2k4m"}'
 ```
 
 Executes browser checkout, returns receipt.
@@ -127,7 +129,7 @@ Usage notes:
 Returns:
 ```json
 {
-  "order_id": "bloon_ord_...",
+  "order_id": "tomo_ord_...",
   "product": { "name": "...", "url": "...", "price": "..." },
   "payment": {
     "item_price": "12.99",
@@ -155,7 +157,7 @@ Shipping rules:
 Returns:
 ```json
 {
-  "order_id": "bloon_ord_...",
+  "order_id": "tomo_ord_...",
   "status": "completed",
   "receipt": {
     "product": "...",
@@ -196,6 +198,37 @@ May also include: order_number, browserbase_session_id.
 4. POST /api/confirm { order_id }
 5. Return receipt to human
 ```
+
+### Account-gated tasks (POST /api/run)
+
+For tasks that need to get past a login wall (e.g. an account-only store, or "check
+into my flight"), `/api/run` plans and executes the whole task and decides, per service,
+whether to use a fresh **agent identity** or **your connected account**:
+
+```
+1. POST /api/run { task: "buy https://store.example/p/123" }
+   -> The planner runs discover -> login -> purchase. It returns either a
+      completed result, or a pause:
+      { run_id, status: "awaiting_approval", gate: { type, details } }
+
+2. Handle the gate by type, then resume:
+   - create_account : a fresh agent account will be registered on the site.
+       POST /api/run/:run_id/approve { approved: true }
+   - session_token  : you already have an account there; supply a login session token.
+       POST /api/run/:run_id/approve { session_token: "<cookie value>", cookie_name?: "session" }
+   - purchase_confirm: shows item_price, platform_fee, quote_total, estimated_max_charge.
+       POST /api/run/:run_id/approve { approved: true }   (or { approved: false } to cancel)
+
+3. Repeat resume until status is "completed" (result.receipt) or "failed".
+```
+
+How the agent-vs-you decision is made: an LLM judges whether the task needs YOUR account
+on that service. It checks your connected email (via Composio) for signs you already have
+an account. If so → your account (OTP read from your email, or a session token you supply).
+If not → a fresh agent identity with its own email and a vaulted password.
+
+Security: passwords and session tokens are stored encrypted and filled directly into the
+page — they are never shown to the LLM and never written to the run log.
 
 ## Error Codes
 

@@ -3,10 +3,10 @@ import {
   type RichProductInfo,
   type RequiredField,
   type ProductOption,
-  BloonError,
+  TomoError,
   ErrorCodes,
-} from "@bloon/core";
-import { classifyUrl, discoverWithStrategy } from "@bloon/crawling";
+} from "@tomo/core";
+import { classifyUrl, discoverWithStrategy } from "@tomo/crawling";
 
 export interface QueryInput {
   url: string;
@@ -44,7 +44,7 @@ export async function query(input: QueryInput): Promise<QueryResponse> {
   try {
     new URL(url);
   } catch {
-    throw new BloonError(ErrorCodes.INVALID_URL, `Invalid URL: ${url}`);
+    throw new TomoError(ErrorCodes.INVALID_URL, `Invalid URL: ${url}`);
   }
 
   // 2. Discover product info (strategy-aware routing)
@@ -53,15 +53,15 @@ export async function query(input: QueryInput): Promise<QueryResponse> {
   try {
     discovery = await discoverWithStrategy(url, strategy);
   } catch (e) {
-    if (e instanceof BloonError) throw e;
-    throw new BloonError(
+    if (e instanceof TomoError) throw e;
+    throw new TomoError(
       ErrorCodes.QUERY_FAILED,
       `Product discovery failed for ${url}: ${e instanceof Error ? e.message : "unknown error"}`,
     );
   }
 
   if (!discovery) {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.QUERY_FAILED,
       `Product discovery failed for ${url}: no structured data found`,
     );

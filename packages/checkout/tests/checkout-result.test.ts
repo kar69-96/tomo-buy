@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { CheckoutResult, CheckoutCheckpoints } from "../src/task.js";
-import type { CheckoutErrorCategory } from "@bloon/core";
+import type { CheckoutErrorCategory } from "@tomo/core";
 
 describe("CheckoutResult type shape", () => {
   it("supports all new fields from hardening", () => {
@@ -11,7 +11,7 @@ describe("CheckoutResult type shape", () => {
       failedStep: "fill-shipping",
       errorMessage: "No shipping fields found",
       errorCategory: "form_fill_failed",
-      diagnosticScreenshotPath: "/home/user/.bloon/diagnostics/test-session-123.png",
+      diagnosticScreenshotPath: "/home/user/.tomo/diagnostics/test-session-123.png",
       checkpoints: {
         cart: "https://example.com/cart",
         shipping: "https://example.com/checkout/shipping",

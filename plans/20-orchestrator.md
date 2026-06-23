@@ -38,7 +38,7 @@ Discovers product info. Recommended first step.
 
 **Flow:**
 1. Validate URL format
-2. Call `discoverProduct(url)` from `@bloon/checkout` which runs the multi-tier discovery pipeline (Firecrawl → Exa.ai → scrape → Browserbase)
+2. Call `discoverProduct(url)` from `@tomo/checkout` which runs the multi-tier discovery pipeline (Firecrawl → Exa.ai → scrape → Browserbase)
 3. Build `required_fields` — always includes standard shipping fields (name, email, phone, street, apartment, city, state, zip, country). Adds "selections" if product has options.
 4. Return `QueryResponse` with product info, options, required fields, and discovery method
 
@@ -51,7 +51,7 @@ Creates a purchase quote. Does NOT charge the card or execute the purchase.
 2. Resolve shipping: use provided → fall back to .env defaults → throw `SHIPPING_REQUIRED`
 3. Validate all required shipping fields are non-empty (except `apartment`)
 4. Validate selections (if provided) are non-empty string key-value pairs
-5. Call `discoverPrice(url, shipping)` from `@bloon/checkout`
+5. Call `discoverPrice(url, shipping)` from `@tomo/checkout`
 6. Calculate fee and total
 7. Create order with status `"awaiting_confirmation"`, expires in 5 minutes
 8. Persist order to store
@@ -80,9 +80,9 @@ Creates a receipt from checkout results.
 ## Dependencies
 
 ```
-@bloon/orchestrator
-  ├── @bloon/core       (types, store, fees, config, error codes)
-  └── @bloon/checkout   (discoverProduct, discoverPrice, runCheckout)
+@tomo/orchestrator
+  ├── @tomo/core       (types, store, fees, config, error codes)
+  └── @tomo/checkout   (discoverProduct, discoverPrice, runCheckout)
 ```
 
 ## Key Design Decisions

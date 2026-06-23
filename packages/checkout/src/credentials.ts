@@ -1,13 +1,19 @@
-import { getCardInfo, getBillingInfo } from "@bloon/core";
-import type { ShippingInfo, CredentialsMap, CardInfo } from "@bloon/core";
+import { getCardInfo, getBillingInfo } from "@tomo/core";
+import type { ShippingInfo, CredentialsMap, CardInfo } from "@tomo/core";
 
-// ---- CDP-only fields (card data — never sent through Stagehand LLM) ----
+// ---- CDP-only fields (secrets — never sent through the Stagehand/agent LLM) ----
+//
+// Card data AND login secrets (password, session token) are filled via the
+// direct Playwright / CDP path only. The model may see the login EMAIL (as a
+// %var% name) but never the password or token — same boundary as card numbers.
 
 const CDP_FIELDS: ReadonlySet<string> = new Set([
   "x_card_number",
   "x_card_expiry",
   "x_card_cvv",
   "x_cardholder_name",
+  "x_login_password",
+  "x_session_token",
 ]);
 
 export function isCdpField(fieldName: string): boolean {

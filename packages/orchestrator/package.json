@@ -1,5 +1,5 @@
 {
-  "name": "@bloon/orchestrator",
+  "name": "@tomo/orchestrator",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -8,9 +8,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@bloon/core": "workspace:*",
-    "@bloon/checkout": "workspace:*",
-    "@bloon/checkout-http": "workspace:*",
-    "@bloon/crawling": "workspace:*"
+    "@tomo/core": "workspace:*",
+    "@tomo/checkout": "workspace:*",
+    "@tomo/checkout-http": "workspace:*",
+    "@tomo/crawling": "workspace:*"
   }
 }

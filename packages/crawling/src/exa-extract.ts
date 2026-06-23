@@ -5,7 +5,7 @@
  */
 
 import type Exa from "exa-js";
-import type { ProductOption } from "@bloon/core";
+import type { ProductOption } from "@tomo/core";
 import type { FullDiscoveryResult } from "./discover.js";
 import { stripCurrencySymbol, isValidPrice, mapOptions, computeWordOverlap, cleanExtractField, isRedirectToOtherPage } from "./helpers.js";
 import { valuesLikelyMatch } from "./variant.js";

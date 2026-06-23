@@ -13,7 +13,7 @@
  */
 
 import * as cheerio from "cheerio";
-import type { ValueSource } from "@bloon/core";
+import type { ValueSource } from "@tomo/core";
 import type { FetchResult } from "./types.js";
 
 // ---- JSON path traversal ----

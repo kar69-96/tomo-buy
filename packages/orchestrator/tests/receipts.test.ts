@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import type { Order } from "@bloon/core";
+import type { Order } from "@tomo/core";
 import { buildReceipt } from "../src/receipts.js";
 
 function makeOrder(overrides: Partial<Order> = {}): Order {
   return {
-    order_id: "bloon_ord_test01",
+    order_id: "tomo_ord_test01",
     status: "processing",
     product: {
       name: "Test Product",

@@ -1,5 +1,5 @@
-import type { ProductOption } from "@bloon/core";
-import { concurrencyPool } from "@bloon/core";
+import type { ProductOption } from "@tomo/core";
+import { concurrencyPool } from "@tomo/core";
 import type { FirecrawlConfig } from "./types.js";
 import { MAX_VARIANT_EXTRACT, VARIANT_EXTRACT_CONCURRENCY } from "./constants.js";
 import { stripCurrencySymbol, computeWordOverlap } from "./helpers.js";

@@ -1,6 +1,6 @@
 # Tomo-buy — Handoff (agentbuy core, Agentcard-funded)
 
-The backend was **replaced wholesale** with a fork of `kar69-96/agentbuy` ("Bloon") and rewired to
+The backend was **replaced wholesale** with a fork of `kar69-96/agentbuy` ("Tomo") and rewired to
 this project's constraints. The old Tomo-buy backend (Temporal/intent-router/vaults) is archived
 under `_tomo-archive/`.
 
@@ -70,7 +70,7 @@ curl -s -X POST localhost:3010/api/query  -H 'content-type: application/json' -d
 curl -s -X POST localhost:3010/api/buy    -H 'content-type: application/json' \
   -d '{"url":"<product-url>","shipping":{"name":"...","street":"...","city":"...","state":"..","zip":"..","country":"US","email":"..","phone":".."}}'
 # -> returns order_id and a quote. Nothing spent yet.
-curl -s -X POST localhost:3010/api/confirm -H 'content-type: application/json' -d '{"order_id":"bloon_ord_..."}'
+curl -s -X POST localhost:3010/api/confirm -H 'content-type: application/json' -d '{"order_id":"tomo_ord_..."}'
 # -> issues a single-use Agentcard, drives Chrome to checkout, REAL purchase, returns a receipt.
 ```
 
@@ -83,7 +83,7 @@ Funding knobs (`.env`): `FUNDING=agentcard|static`, `AGENTCARD_BUFFER_PCT` (defa
 
 ```
 packages/
-  core/         types, fees, JSON store (~/.bloon), config (FUNDING + Agentcard knobs), errors
+  core/         types, fees, JSON store (~/.tomo), config (FUNDING + Agentcard knobs), errors
   crawling/     discovery: Exa search + Playwright fetch + OpenRouter extraction (Firecrawl/Gemini removed)
   checkout/     session.ts (Playwright), task.ts (checkout loop), act.ts (OpenRouter act),
                 fill.ts/agent-tools.ts (CDP card fill), agentcard.ts (funding), credentials.ts

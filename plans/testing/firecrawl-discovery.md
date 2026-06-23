@@ -56,7 +56,7 @@ Test results for the 3-step Firecrawl product discovery pipeline.
 
 ### Run #3 — 2026-03-18 (post pipeline improvements)
 
-**Command:** `BLOON_API_URL=http://localhost:3001 BULK_TEST_CONCURRENCY=1 npx tsx packages/crawling/tests/bulk-query-endpoint-test.ts`
+**Command:** `TOMO_API_URL=http://localhost:3001 BULK_TEST_CONCURRENCY=1 npx tsx packages/crawling/tests/bulk-query-endpoint-test.ts`
 
 **Result: 51/54 pass (94%)** — up from 48/61 (79%) baseline
 

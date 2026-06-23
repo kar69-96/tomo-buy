@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { concurrencyPool } from "../src/concurrency-pool.js";
 
-// Re-export tests: verify checkout's concurrency-pool re-exports from @bloon/core
-describe("concurrencyPool (re-export from @bloon/core)", () => {
+// Re-export tests: verify checkout's concurrency-pool re-exports from @tomo/core
+describe("concurrencyPool (re-export from @tomo/core)", () => {
   it("re-exports and works correctly", async () => {
     const results = await concurrencyPool([1, 2], async (n) => n * 2, 2);
     expect(results).toHaveLength(2);

@@ -2,13 +2,13 @@ import type { Page } from "playwright";
 import {
   type ShippingInfo,
   type ProductOption,
-} from "@bloon/core";
+} from "@tomo/core";
 import {
   discoverViaFirecrawl,
   stripCurrencySymbol,
   extractPriceFromString,
-} from "@bloon/crawling";
-import type { FullDiscoveryResult } from "@bloon/crawling";
+} from "@tomo/crawling";
+import type { FullDiscoveryResult } from "@tomo/crawling";
 import { createSession, destroySession } from "./session.js";
 import { completeJson } from "./llm.js";
 
@@ -29,7 +29,7 @@ export interface DiscoveryResultWithOptions extends DiscoveryResult {
 }
 
 // Re-export FullDiscoveryResult from crawling for consumers
-export type { FullDiscoveryResult } from "@bloon/crawling";
+export type { FullDiscoveryResult } from "@tomo/crawling";
 
 // ---- Tier 1: Server-side scrape (JSON-LD + meta tags) ----
 

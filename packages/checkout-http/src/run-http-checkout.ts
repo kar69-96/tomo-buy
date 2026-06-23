@@ -12,7 +12,7 @@
  *   5. Map result to HTTPCheckoutResult
  */
 
-import type { Order, ShippingInfo, CheckoutErrorCategory } from "@bloon/core";
+import type { Order, ShippingInfo, CheckoutErrorCategory } from "@tomo/core";
 import { loadProfile, invalidateProfile } from "./profile-cache.js";
 import { isProfileStale } from "./profile-cache.js";
 import { executeFlow } from "./flow-executor.js";

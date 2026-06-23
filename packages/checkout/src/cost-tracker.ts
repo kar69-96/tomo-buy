@@ -1,4 +1,4 @@
-import type { CostBreakdown, CostEntry, SessionCostEntry } from "@bloon/core";
+import type { CostBreakdown, CostEntry, SessionCostEntry } from "@tomo/core";
 
 // ---- LLM pricing per token ----
 
@@ -71,7 +71,7 @@ export class CostTracker {
 
     const lines: string[] = [];
     lines.push("┌─────────────────────────────────────────────────────────┐");
-    lines.push("│              BLOON RUN COST BREAKDOWN                   │");
+    lines.push("│              TOMO RUN COST BREAKDOWN                   │");
     lines.push("├───────────────────────┬──────────┬──────────┬───────────┤");
     lines.push("│ Operation             │ In Tokens│Out Tokens│ Est. $    │");
     lines.push("├───────────────────────┼──────────┼──────────┼───────────┤");

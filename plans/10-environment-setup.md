@@ -1,4 +1,4 @@
-# Environment Setup — Bloon v1
+# Environment Setup — Tomo v1
 
 ## Prerequisites
 
@@ -75,13 +75,13 @@ node packages/api/dist/index.js
 # → Server running on http://localhost:3000
 
 # Start (development, with hot reload)
-pnpm --filter @bloon/api dev
+pnpm --filter @tomo/api dev
 ```
 
 ## Data Directory
 
 ```
-~/.bloon/
+~/.tomo/
 ├── config.json       # Settings
 ├── orders.json       # All orders and receipts
 └── cache/            # Domain page cache

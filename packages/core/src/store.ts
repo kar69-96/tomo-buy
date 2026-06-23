@@ -5,14 +5,22 @@ import * as os from "node:os";
 import type {
   Order,
   OrderStatus,
-  BloonConfig,
+  TomoConfig,
   OrdersStore,
+  AgentIdentity,
+  AgentIdentitiesStore,
+  ConnectedAccount,
+  ConnectedAccountsStore,
+  SiteAccount,
+  SiteAccountsStore,
+  Run,
+  RunsStore,
 } from "./types.js";
 
 // ---- Data directory ----
 
 function getDataDir(): string {
-  return process.env.BLOON_DATA_DIR || path.join(os.homedir(), ".bloon");
+  return process.env.TOMO_DATA_DIR || path.join(os.homedir(), ".tomo");
 }
 
 function ensureDataDir(): void {
@@ -66,7 +74,7 @@ export function generateId(prefix: string): string {
     .toString(36)
     .padStart(6, "0")
     .slice(0, 6);
-  return `bloon_${prefix}_${id}`;
+  return `tomo_${prefix}_${id}`;
 }
 
 // ---- Order operations ----
@@ -109,13 +117,157 @@ export function updateOrderStatus(
   return updateOrder(orderId, { status });
 }
 
-// ---- Config operations ----
+// ---- Generic collection resource (atomic, serialized writes) ----
 
-export function getConfig(): BloonConfig | undefined {
-  return readJsonFile<BloonConfig | undefined>("config.json", undefined);
+/**
+ * Build CRUD helpers for a JSON collection stored under ~/.tomo.
+ * Each resource gets its own serialized write queue, mirroring orders.
+ */
+function createCollection<T>(
+  filename: string,
+  field: string,
+  idField: keyof T,
+) {
+  let queue: Promise<void> = Promise.resolve();
+  const empty = () => ({ [field]: [] }) as Record<string, T[]>;
+
+  const read = (): T[] => {
+    const store = readJsonFile<Record<string, T[]>>(filename, empty());
+    return store[field] ?? [];
+  };
+
+  const enqueue = (fn: () => void): Promise<void> => {
+    queue = queue.then(fn);
+    return queue;
+  };
+
+  return {
+    all: read,
+    get: (id: string): T | undefined =>
+      read().find((item) => item[idField] === (id as unknown)),
+    create: (item: T): Promise<void> =>
+      enqueue(() => {
+        const items = read();
+        items.push(item);
+        writeJsonFile(filename, { [field]: items });
+      }),
+    update: (id: string, updates: Partial<T>): Promise<void> =>
+      enqueue(() => {
+        const items = read();
+        const idx = items.findIndex((item) => item[idField] === (id as unknown));
+        if (idx === -1) return;
+        items[idx] = { ...items[idx]!, ...updates };
+        writeJsonFile(filename, { [field]: items });
+      }),
+    remove: (id: string): Promise<void> =>
+      enqueue(() => {
+        const items = read().filter((item) => item[idField] !== (id as unknown));
+        writeJsonFile(filename, { [field]: items });
+      }),
+  };
 }
 
-export function saveConfig(config: BloonConfig): Promise<void> {
+// ---- Agent identities ----
+
+const identities = createCollection<AgentIdentity>(
+  "identities.json",
+  "identities",
+  "identity_id",
+);
+
+export function getIdentities(): AgentIdentity[] {
+  return identities.all();
+}
+export function getIdentity(id: string): AgentIdentity | undefined {
+  return identities.get(id);
+}
+export function createIdentity(identity: AgentIdentity): Promise<void> {
+  return identities.create(identity);
+}
+export function updateIdentity(
+  id: string,
+  updates: Partial<AgentIdentity>,
+): Promise<void> {
+  return identities.update(id, updates);
+}
+
+// ---- Connected accounts ----
+
+const connectedAccounts = createCollection<ConnectedAccount>(
+  "connected-accounts.json",
+  "accounts",
+  "account_id",
+);
+
+export function getConnectedAccounts(): ConnectedAccount[] {
+  return connectedAccounts.all();
+}
+export function getConnectedAccount(id: string): ConnectedAccount | undefined {
+  return connectedAccounts.get(id);
+}
+export function createConnectedAccount(
+  account: ConnectedAccount,
+): Promise<void> {
+  return connectedAccounts.create(account);
+}
+export function updateConnectedAccount(
+  id: string,
+  updates: Partial<ConnectedAccount>,
+): Promise<void> {
+  return connectedAccounts.update(id, updates);
+}
+
+// ---- Site accounts (an identity's account on a specific domain) ----
+
+const siteAccountsStore = (): SiteAccount[] =>
+  readJsonFile<SiteAccountsStore>("site-accounts.json", {
+    site_accounts: [],
+  }).site_accounts;
+
+let siteAccountsQueue: Promise<void> = Promise.resolve();
+
+export function getSiteAccount(
+  identityId: string,
+  domain: string,
+): SiteAccount | undefined {
+  return siteAccountsStore().find(
+    (a) => a.identity_id === identityId && a.domain === domain,
+  );
+}
+
+export function createSiteAccount(account: SiteAccount): Promise<void> {
+  siteAccountsQueue = siteAccountsQueue.then(() => {
+    const accounts = siteAccountsStore();
+    accounts.push(account);
+    writeJsonFile("site-accounts.json", { site_accounts: accounts });
+  });
+  return siteAccountsQueue;
+}
+
+// ---- Planner runs ----
+
+const runs = createCollection<Run>("runs.json", "runs", "run_id");
+
+export function getRuns(): Run[] {
+  return runs.all();
+}
+export function getRun(id: string): Run | undefined {
+  return runs.get(id);
+}
+export function createRun(run: Run): Promise<void> {
+  return runs.create(run);
+}
+export function updateRun(id: string, updates: Partial<Run>): Promise<void> {
+  return runs.update(id, updates);
+}
+
+// ---- Config operations ----
+
+export function getConfig(): TomoConfig | undefined {
+  return readJsonFile<TomoConfig | undefined>("config.json", undefined);
+}
+
+export function saveConfig(config: TomoConfig): Promise<void> {
   return enqueueConfig(() => {
     writeJsonFile("config.json", config);
   });

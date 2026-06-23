@@ -27,9 +27,9 @@ export type {
   DiscoveryResultWithOptions,
 } from "./discover.js";
 
-// Re-export Firecrawl discovery from @bloon/crawling
-export { discoverViaFirecrawl } from "@bloon/crawling";
-export type { FullDiscoveryResult } from "@bloon/crawling";
+// Re-export Firecrawl discovery from @tomo/crawling
+export { discoverViaFirecrawl } from "@tomo/crawling";
+export type { FullDiscoveryResult } from "@tomo/crawling";
 
 // ---- Concurrency pool ----
 export { concurrencyPool } from "./concurrency-pool.js";
@@ -124,6 +124,10 @@ export {
 export type { PageType, ConfirmationData, ErrorData, ErrorType } from "./scripted-actions.js";
 
 
+// ---- Login-gate execution (identity-driven) ----
+export { executeLogin, seedSessionCookies } from "./login.js";
+export type { LoginPlan, LoginResult, SessionCookie } from "./login.js";
+
 // ---- AgentMail (email verification) ----
 export {
   getOrCreateInbox,
@@ -134,3 +138,7 @@ export {
 
 // ---- Agent tools (includes iframe scanner) ----
 export { scanIframesForCardFields } from "./agent-tools.js";
+
+// ---- Checkout tracing (JSONL + screenshots; opt-in via CHECKOUT_TRACE_DIR) ----
+export { CheckoutTracer, makeTracerFromEnv } from "./trace.js";
+export type { TraceRecord, TraceMode } from "./trace.js";

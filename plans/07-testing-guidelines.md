@@ -1,4 +1,4 @@
-# Testing Guidelines — Bloon v1
+# Testing Guidelines — Tomo v1
 
 ## Testing Philosophy
 
@@ -109,7 +109,7 @@ curl -s -X POST http://localhost:3000/api/confirm \
 3. `POST /api/confirm` → browser checkout, receipt with order number
 
 **Scenario B: Domain Cache**
-1. Buy from Target (first time) → cache created at `~/.bloon/cache/target.com.json`
+1. Buy from Target (first time) → cache created at `~/.tomo/cache/target.com.json`
 2. Buy from Target (second time) → cache injected, checkout completes
 
 ---
@@ -121,7 +121,7 @@ After every browser checkout test, verify:
 - [ ] LLM log contains only `x_card_number`, `x_card_cvv`, etc.
 - [ ] Real values only appear in DOM injection (Browserbase session)
 - [ ] No credentials in API response bodies
-- [ ] No card credentials in `~/.bloon/orders.json`
+- [ ] No card credentials in `~/.tomo/orders.json`
 
 ---
 

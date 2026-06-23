@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { BloonError, ErrorCodes, getOrder } from "@bloon/core";
-import { confirm } from "@bloon/orchestrator";
+import { TomoError, ErrorCodes, getOrder } from "@tomo/core";
+import { confirm } from "@tomo/orchestrator";
 import {
   formatConfirmResponse,
   formatConfirmFailedResponse,
@@ -17,16 +17,20 @@ confirmRoutes.post("/confirm", async (c) => {
     typeof body.order_id !== "string" ||
     body.order_id.trim() === ""
   ) {
-    throw new BloonError(ErrorCodes.MISSING_FIELD, "order_id is required");
+    throw new TomoError(ErrorCodes.MISSING_FIELD, "order_id is required");
   }
 
   try {
     const result = await confirm({ order_id: body.order_id.trim() });
+    if (!result.receipt) {
+      // Only happens for a no-spend oversight run, which this route never requests.
+      throw new TomoError(ErrorCodes.CHECKOUT_FAILED, "Checkout returned no receipt");
+    }
     return c.json(formatConfirmResponse(result.order, result.receipt));
   } catch (err) {
     // For CHECKOUT_FAILED, return 200 with failed order details per spec
     if (
-      err instanceof BloonError &&
+      err instanceof TomoError &&
       err.code === ErrorCodes.CHECKOUT_FAILED
     ) {
       const order = getOrder(body.order_id.trim());

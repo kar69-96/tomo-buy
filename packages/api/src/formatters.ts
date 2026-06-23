@@ -1,4 +1,4 @@
-import type { Order, Receipt, QueryResponse, SearchQueryResponse } from "@bloon/core";
+import type { Order, Receipt, QueryResponse, SearchQueryResponse } from "@tomo/core";
 
 function getHostname(url: string): string {
   try {

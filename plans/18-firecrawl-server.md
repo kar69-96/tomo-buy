@@ -1,6 +1,6 @@
 # Running the Firecrawl Server
 
-How to set up, start, and operate the self-hosted Firecrawl instance used by Bloon's product discovery pipeline.
+How to set up, start, and operate the self-hosted Firecrawl instance used by Tomo's product discovery pipeline.
 
 ## Prerequisites
 

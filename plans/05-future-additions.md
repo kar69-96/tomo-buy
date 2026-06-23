@@ -1,4 +1,4 @@
-# Future Additions — Bloon
+# Future Additions — Tomo
 
 Features explicitly deferred from v1 to keep scope tight.
 
@@ -9,7 +9,7 @@ Features explicitly deferred from v1 to keep scope tight.
 ### Exa.ai Product Search
 - Exa.ai is already integrated as Stage 2.5 in the discovery pipeline (URL → product info extraction)
 - This v1.5 addition is **search-first**: agents describe what they want ("wireless mouse under $20") instead of providing a URL
-- Exa.ai `/search` returns product URLs → Bloon handles the purchase
+- Exa.ai `/search` returns product URLs → Tomo handles the purchase
 - New endpoint: `POST /api/search` with `query`
 - Requires `EXA_API_KEY` in .env (already used for discovery)
 
@@ -25,7 +25,7 @@ Features explicitly deferred from v1 to keep scope tight.
 
 ### Rate Limiting
 - Per-operator rate limits on buy/confirm
-- Configurable in `~/.bloon/config.json`
+- Configurable in `~/.tomo/config.json`
 - Prevents runaway spending from automated agents
 
 ### Confirm Idempotency
@@ -35,7 +35,7 @@ Features explicitly deferred from v1 to keep scope tight.
 
 ### Webhook Notifications
 - `POST /api/wallets` accepts optional `webhook_url`
-- Bloon POSTs to the URL on: order confirmed, order completed, order failed
+- Tomo POSTs to the URL on: order confirmed, order completed, order failed
 - Enables async workflows — agent doesn't need to poll
 
 ---
@@ -44,7 +44,7 @@ Features explicitly deferred from v1 to keep scope tight.
 
 ### MCP Wrapper
 - Thin MCP server that calls the REST API internally
-- Exposes Bloon tools natively in Claude Desktop, Cursor, etc.
+- Exposes Tomo tools natively in Claude Desktop, Cursor, etc.
 - Same operations: query, buy, confirm
 - REST API remains the source of truth
 

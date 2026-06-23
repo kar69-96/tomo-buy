@@ -2,10 +2,10 @@
  * Bulk URL test against the /api/query endpoint.
  * Measures timings, accuracy, and discovery methods.
  *
- * Usage: BLOON_API_URL=http://localhost:3001 npx tsx packages/crawling/tests/bulk-query-endpoint-test.ts
+ * Usage: TOMO_API_URL=http://localhost:3001 npx tsx packages/crawling/tests/bulk-query-endpoint-test.ts
  */
 
-const API_URL = process.env.BLOON_API_URL ?? "http://localhost:3001";
+const API_URL = process.env.TOMO_API_URL ?? "http://localhost:3001";
 const CONCURRENCY = parseInt(process.env.BULK_TEST_CONCURRENCY ?? "3", 10);
 
 interface QueryResult {

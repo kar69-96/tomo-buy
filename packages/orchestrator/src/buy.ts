@@ -1,7 +1,7 @@
 import {
   type Order,
   type ShippingInfo,
-  BloonError,
+  TomoError,
   ErrorCodes,
   generateId,
   createOrder,
@@ -9,8 +9,8 @@ import {
   calculateTotal,
   getDefaultShipping,
   loadConfig,
-} from "@bloon/core";
-import { discoverPrice } from "@bloon/checkout";
+} from "@tomo/core";
+import { discoverPrice } from "@tomo/checkout";
 
 export interface BuyInput {
   url: string;
@@ -25,13 +25,13 @@ export async function buy(input: BuyInput): Promise<Order> {
   try {
     new URL(url);
   } catch {
-    throw new BloonError(ErrorCodes.INVALID_URL, `Invalid URL: ${url}`);
+    throw new TomoError(ErrorCodes.INVALID_URL, `Invalid URL: ${url}`);
   }
 
   // 2. Resolve shipping
   const resolvedShipping = input.shipping || getDefaultShipping();
   if (!resolvedShipping) {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.SHIPPING_REQUIRED,
       "Shipping address required for browser checkout (no defaults configured)",
     );
@@ -42,7 +42,7 @@ export async function buy(input: BuyInput): Promise<Order> {
   const requiredShippingFields = ['name', 'street', 'city', 'state', 'zip', 'country', 'email', 'phone'] as const;
   const blankFields = requiredShippingFields.filter(f => !shipping[f]?.trim());
   if (blankFields.length > 0) {
-    throw new BloonError(
+    throw new TomoError(
       ErrorCodes.MISSING_FIELD,
       `Missing required fields: ${blankFields.map(f => `shipping.${f}`).join(', ')}`,
     );
@@ -52,7 +52,7 @@ export async function buy(input: BuyInput): Promise<Order> {
   if (input.selections) {
     for (const [key, value] of Object.entries(input.selections)) {
       if (typeof key !== 'string' || typeof value !== 'string' || !key.trim() || !value.trim()) {
-        throw new BloonError(ErrorCodes.INVALID_SELECTION, 'Selections must have non-empty string keys and values');
+        throw new TomoError(ErrorCodes.INVALID_SELECTION, 'Selections must have non-empty string keys and values');
       }
     }
   }
@@ -62,8 +62,8 @@ export async function buy(input: BuyInput): Promise<Order> {
   try {
     discovery = await discoverPrice(url, resolvedShipping);
   } catch (e) {
-    if (e instanceof BloonError) throw e;
-    throw new BloonError(
+    if (e instanceof TomoError) throw e;
+    throw new TomoError(
       ErrorCodes.PRICE_EXTRACTION_FAILED,
       `Price discovery failed for ${url}: ${e instanceof Error ? e.message : "unknown error"}`,
     );

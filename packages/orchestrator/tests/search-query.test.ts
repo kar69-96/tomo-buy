@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { BloonError } from "@bloon/core";
+import { TomoError } from "@tomo/core";
 
 // Mock crawling module
-vi.mock("@bloon/crawling", () => ({
+vi.mock("@tomo/crawling", () => ({
   parseSearchQuery: vi.fn(),
   searchProducts: vi.fn(),
   classifyUrl: vi.fn().mockReturnValue("exa_first"),
@@ -11,11 +11,11 @@ vi.mock("@bloon/crawling", () => ({
 }));
 
 // Mock checkout module (resolveVariantPricesViaBrowser for blocked_only enrichment)
-vi.mock("@bloon/checkout", () => ({
+vi.mock("@tomo/checkout", () => ({
   resolveVariantPricesViaBrowser: vi.fn().mockImplementation((_url: string, opts: unknown[]) => Promise.resolve(opts)),
 }));
 
-import { parseSearchQuery, searchProducts } from "@bloon/crawling";
+import { parseSearchQuery, searchProducts } from "@tomo/crawling";
 import { searchQuery } from "../src/search-query.js";
 
 const mockedParse = vi.mocked(parseSearchQuery);
@@ -62,12 +62,12 @@ describe("searchQuery", () => {
   });
 
   it("throws MISSING_FIELD for empty query", async () => {
-    await expect(searchQuery({ query: "" })).rejects.toThrow(BloonError);
-    await expect(searchQuery({ query: " " })).rejects.toThrow(BloonError);
+    await expect(searchQuery({ query: "" })).rejects.toThrow(TomoError);
+    await expect(searchQuery({ query: " " })).rejects.toThrow(TomoError);
   });
 
   it("throws MISSING_FIELD for single-char query", async () => {
-    await expect(searchQuery({ query: "x" })).rejects.toThrow(BloonError);
+    await expect(searchQuery({ query: "x" })).rejects.toThrow(TomoError);
   });
 
   it("throws MISSING_FIELD when cleaned terms are too short", async () => {
@@ -78,7 +78,7 @@ describe("searchQuery", () => {
       maxPrice: undefined,
     });
 
-    await expect(searchQuery({ query: "on amazon" })).rejects.toThrow(BloonError);
+    await expect(searchQuery({ query: "on amazon" })).rejects.toThrow(TomoError);
   });
 
   it("filters by max price", async () => {

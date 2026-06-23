@@ -8,17 +8,17 @@ import {
   loadDomainCache,
   saveDomainCache,
 } from "../src/cache.js";
-import type { DomainCache } from "@bloon/core";
+import type { DomainCache } from "@tomo/core";
 
 let tmpDir: string;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bloon-cache-test-"));
-  process.env.BLOON_DATA_DIR = tmpDir;
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tomo-cache-test-"));
+  process.env.TOMO_DATA_DIR = tmpDir;
 });
 
 afterEach(() => {
-  delete process.env.BLOON_DATA_DIR;
+  delete process.env.TOMO_DATA_DIR;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 

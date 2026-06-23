@@ -1,4 +1,4 @@
-import type { ProductOption } from "@bloon/core";
+import type { ProductOption } from "@tomo/core";
 
 export function extractPriceFromString(text: string): string | null {
   const cleaned = text.trim();

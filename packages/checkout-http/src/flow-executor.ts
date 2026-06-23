@@ -18,8 +18,8 @@ import type {
   EndpointStep,
   ShippingInfo,
   CheckoutErrorCategory,
-} from "@bloon/core";
-import { getCardInfo } from "@bloon/core";
+} from "@tomo/core";
+import { getCardInfo } from "@tomo/core";
 import type { ExecutionContext, FetchResult, StepResult } from "./types.js";
 import { createSessionState, addCookiesFromHeaders } from "./session-manager.js";
 import { fetchPage } from "./page-fetcher.js";
