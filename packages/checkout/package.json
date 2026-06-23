@@ -10,8 +10,8 @@
   "dependencies": {
     "@bloon/core": "workspace:*",
     "@bloon/crawling": "workspace:*",
-    "@browserbasehq/stagehand": "^3.0.0",
     "agentmail": "^0.3.7",
+    "playwright": "^1.50.0",
     "zod": "^3.22.0"
   }
 }

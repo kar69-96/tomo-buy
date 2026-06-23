@@ -1,8 +1,5 @@
-import { Stagehand } from "@browserbasehq/stagehand";
-import { z } from "zod";
+import type { Page } from "playwright";
 import {
-  BloonError,
-  ErrorCodes,
   type ShippingInfo,
   type ProductOption,
 } from "@bloon/core";
@@ -12,17 +9,8 @@ import {
   extractPriceFromString,
 } from "@bloon/crawling";
 import type { FullDiscoveryResult } from "@bloon/crawling";
-import {
-  createSession,
-  destroySession,
-  getModelApiKey,
-  getQueryModelApiKey,
-  getBrowserbaseConfig,
-} from "./session.js";
-import { sanitizeShipping } from "./credentials.js";
-import { concurrencyPool } from "./concurrency-pool.js";
-import { CostTracker } from "./cost-tracker.js";
-
+import { createSession, destroySession } from "./session.js";
+import { completeJson } from "./llm.js";
 
 // ---- Discovery result ----
 
@@ -162,23 +150,13 @@ export async function scrapePrice(
 
 // ---- Variant price helpers ----
 
-const VariantPriceSchema = z.object({
-  price: z
-    .string()
-    .describe("Currently displayed product price including currency symbol"),
-});
-
 /** Strip characters that could be used for prompt injection in option values. */
 export function sanitizeVariantValue(value: string): string {
   return value.replace(/[<>"'&;]/g, "").slice(0, 100);
 }
 
 /** Dismiss common popups/modals via DOM manipulation (no LLM cost). */
-export async function dismissPopupsOnPage(
-  page: NonNullable<
-    Awaited<ReturnType<InstanceType<typeof Stagehand>["context"]["activePage"]>>
-  >,
-): Promise<void> {
+export async function dismissPopupsOnPage(page: Page): Promise<void> {
   await page.evaluate(() => {
     const closeSelectors = [
       '[aria-label="Close"]',
@@ -197,484 +175,185 @@ export async function dismissPopupsOnPage(
   });
 }
 
-// ---- Tier 3: Browserbase product discovery via Stagehand extract ----
+// ---- Tier 3: Local Playwright render + OpenRouter extraction ----
 
-const BrowserProductSchema = z.object({
-  name: z.string().describe("Product name or title"),
-  price: z.string().describe("Current selling price including currency symbol"),
-  original_price: z
-    .string()
-    .optional()
-    .describe("Original price before discount"),
-  currency: z.string().optional().describe("Currency code, e.g. USD, EUR"),
-  brand: z.string().optional().describe("Brand or manufacturer"),
-  image_url: z.string().optional().describe("Main product image URL"),
-  options: z
-    .array(
-      z.object({
-        name: z.string().describe("Option group name, e.g. Color, Size"),
-        values: z.array(z.string()).describe("Available values"),
-        prices: z
-          .record(z.string(), z.string())
-          .optional()
-          .describe(
-            "Map value→price if different values have different prices",
-          ),
-      }),
-    )
-    .optional()
-    .describe("ALL product variant options"),
-});
+interface ExtractedProduct {
+  name?: string;
+  price?: string;
+  original_price?: string;
+  currency?: string;
+  brand?: string;
+  image_url?: string;
+  options?: Array<{ name: string; values: string[] }>;
+}
+
+const PRODUCT_EXTRACT_SYSTEM =
+  "You extract product data from an e-commerce product page. Return a JSON object: " +
+  '{"name": string, "price": string (digits only, no currency symbol), ' +
+  '"original_price"?: string, "currency"?: string, "brand"?: string, ' +
+  '"image_url"?: string, "options"?: [{"name": string, "values": string[]}]}. ' +
+  "Extract the ONE-TIME (non-subscription) price. Return ONLY the JSON object.";
+
+function mapExtractedOptions(
+  options: Array<{ name: string; values: string[] }> | undefined,
+): ProductOption[] {
+  if (!Array.isArray(options)) return [];
+  return options
+    .filter((o) => o && typeof o.name === "string" && Array.isArray(o.values))
+    .map((o) => ({ name: o.name, values: o.values.map(String) }));
+}
 
 export async function discoverViaBrowser(
   url: string,
 ): Promise<FullDiscoveryResult | null> {
-  // Guard: need Browserbase + query model API keys
-  try {
-    getBrowserbaseConfig();
-    getQueryModelApiKey();
-  } catch {
-    return null;
-  }
-
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
-    session = await createSession();
+    session = await createSession({ headless: true });
   } catch {
     return null;
   }
 
-  const discoverTracker = new CostTracker();
-  const sessionStartMs = Date.now();
-  let stagehand: InstanceType<typeof Stagehand> | undefined;
-  let sessionDestroyed = false;
-
   try {
-    stagehand = new Stagehand({
-      env: "BROWSERBASE",
-      apiKey: process.env.BROWSERBASE_API_KEY!,
-      projectId: process.env.BROWSERBASE_PROJECT_ID!,
-      model: {
-        modelName: "google/gemini-2.5-flash",
-        apiKey: getQueryModelApiKey(),
-      },
-      browserbaseSessionID: session.id,
-    });
+    const page = session.page;
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(2500);
+    await dismissPopupsOnPage(page).catch(() => {});
 
-    await stagehand.init();
-    const page = stagehand.context.activePage()!;
+    // Pure tier first: JSON-LD in the rendered HTML
+    const html = await page.content();
+    const jsonLd = extractJsonLd(html);
+    if (jsonLd) {
+      const name = (jsonLd["name"] as string) || "";
+      let price: string | null = null;
+      const image = (jsonLd["image"] as string) || undefined;
+      let offersObj = jsonLd["offers"] as
+        | Record<string, unknown>
+        | Record<string, unknown>[]
+        | undefined;
+      if (Array.isArray(offersObj)) offersObj = offersObj[0];
+      if (offersObj) {
+        const p = offersObj["price"] ?? offersObj["lowPrice"];
+        if (typeof p === "string" || typeof p === "number") price = String(p);
+      }
+      if (name && price) {
+        return {
+          name,
+          price: stripCurrencySymbol(price),
+          image_url: image,
+          method: "browser",
+          options: [],
+        };
+      }
+    }
 
-    await page.goto(url, { waitUntil: "domcontentloaded", timeoutMs: 30000 });
-    await page.waitForTimeout(3000);
-    await dismissPopupsOnPage(page);
-    await page.waitForTimeout(500);
-
-    const extractStart = Date.now();
-    const extracted = await stagehand.extract(
-      "Extract the product name, current price, original price (if on sale), currency, brand, main image URL, and all variant options (like Color, Size) with their available values and per-value prices if different",
-      BrowserProductSchema,
+    // LLM tier: extract from visible text
+    const text = await page.evaluate(
+      () => document.body?.innerText?.slice(0, 20000) ?? "",
     );
-    discoverTracker.addLLMCall(
-      "discover/extract",
-      0,
-      0,
-      "google/gemini-2.5-flash",
-      Date.now() - extractStart,
+    const parsed = await completeJson<ExtractedProduct>(
+      PRODUCT_EXTRACT_SYSTEM,
+      `Product page text:\n${text}`,
     );
 
-    // Validate minimum required fields (LLM may return literal "null" string)
     if (
-      !extracted.name ||
-      !extracted.price ||
-      extracted.name === "null" ||
-      extracted.price === "null"
+      !parsed?.name ||
+      !parsed?.price ||
+      parsed.name === "null" ||
+      parsed.price === "null"
     ) {
       return null;
     }
 
-    // Map options with currency-stripped prices
-    let options: ProductOption[] = (extracted.options ?? []).map((opt) => ({
-      name: opt.name,
-      values: opt.values,
-      prices: opt.prices
-        ? Object.fromEntries(
-            Object.entries(opt.prices).map(([k, v]) => [
-              k,
-              stripCurrencySymbol(v),
-            ]),
-          )
-        : undefined,
-    }));
-
-    // Close initial session early before spawning concurrent variant fetches
-    try {
-      await stagehand.close();
-    } catch {
-      /* ignore */
-    }
-    stagehand = undefined;
-    await destroySession(session.id);
-    sessionDestroyed = true;
-
-    // Resolve per-variant prices via concurrent Browserbase sessions (best-effort)
-    if (options.length > 0) {
-      try {
-        options = await resolveVariantPricesViaBrowser(url, options);
-      } catch {
-        // Variant resolution is best-effort — keep original options
-      }
-    }
-
     return {
-      name: extracted.name,
-      price: stripCurrencySymbol(extracted.price),
+      name: parsed.name,
+      price: stripCurrencySymbol(parsed.price),
       image_url:
-        extracted.image_url && extracted.image_url !== "null"
-          ? extracted.image_url
+        parsed.image_url && parsed.image_url !== "null"
+          ? parsed.image_url
           : undefined,
-      method: "browserbase",
-      options,
-      original_price: extracted.original_price
-        ? stripCurrencySymbol(extracted.original_price)
+      method: "browser",
+      options: mapExtractedOptions(parsed.options),
+      original_price: parsed.original_price
+        ? stripCurrencySymbol(parsed.original_price)
         : undefined,
-      currency: extracted.currency,
-      brand: extracted.brand,
+      currency: parsed.currency,
+      brand: parsed.brand,
     };
   } catch {
     return null;
   } finally {
-    discoverTracker.addSession(session.id, Date.now() - sessionStartMs);
-    discoverTracker.printSummary();
-    if (stagehand) {
-      try {
-        await stagehand.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    if (!sessionDestroyed) {
-      await destroySession(session.id);
-    }
+    await destroySession(session);
   }
 }
 
-// ---- Per-variant price fetch via Browserbase ----
+// ---- Per-variant price fetch (degraded) ----
+//
+// Upstream resolved each variant's price by driving a Stagehand agent to click
+// the swatch and re-read the price. That agent path is gone; per-variant price
+// resolution is now a no-op (base price is used for all variants). The exports
+// are preserved for API compatibility.
 
-const VARIANT_AGENT_SYSTEM_PROMPT = `You are selecting a product variant on an e-commerce website.
-
-Your task:
-1. Find the correct variant selector for the requested option (e.g. Color, Size, Style)
-2. Select the requested value
-3. Report the updated product price
-
-CRITICAL RULES:
-- NEVER interact with the quantity selector or "Qty" dropdown — that is NOT a variant
-- Look for variant selectors: color swatches, size buttons, labeled dropdowns
-  in the product details/options area
-- Variant selectors are usually near the product title and price, labeled with
-  their option name (e.g. "Color:", "Size:", "Style:")
-- After selecting, wait for the price to update, then report it`;
-
-/** Fetch a single variant's price in a fresh Browserbase session. */
+/** Degraded: per-variant browser price resolution is not implemented locally. */
 export async function fetchVariantPriceBrowser(
-  url: string,
-  optionName: string,
-  value: string,
+  _url: string,
+  _optionName: string,
+  _value: string,
 ): Promise<string | null> {
-  let session: Awaited<ReturnType<typeof createSession>>;
-  try {
-    session = await createSession();
-  } catch {
-    return null;
-  }
-
-  const variantTracker = new CostTracker();
-  const sessionStartMs = Date.now();
-  let stagehand: InstanceType<typeof Stagehand> | undefined;
-
-  try {
-    stagehand = new Stagehand({
-      env: "BROWSERBASE",
-      apiKey: process.env.BROWSERBASE_API_KEY!,
-      projectId: process.env.BROWSERBASE_PROJECT_ID!,
-      model: {
-        modelName: "google/gemini-2.5-flash",
-        apiKey: getQueryModelApiKey(),
-      },
-      browserbaseSessionID: session.id,
-      experimental: true,
-    });
-
-    await stagehand.init();
-    const page = stagehand.context.activePage()!;
-
-    await page.goto(url, { waitUntil: "domcontentloaded", timeoutMs: 30000 });
-    await page.waitForTimeout(3000);
-    await dismissPopupsOnPage(page);
-
-    const agent = stagehand.agent({
-      mode: "dom",
-      systemPrompt: VARIANT_AGENT_SYSTEM_PROMPT,
-    });
-
-    const safeName = sanitizeVariantValue(optionName);
-    const safeValue = sanitizeVariantValue(value);
-    const agentStart = Date.now();
-
-    const result = await agent.execute({
-      instruction: `Select the "${safeName}" variant with value "${safeValue}". Then report the currently displayed product price.`,
-      maxSteps: 8,
-      output: VariantPriceSchema,
-    });
-
-    const resultUsage = result.usage;
-    if (resultUsage?.input_tokens || resultUsage?.output_tokens) {
-      variantTracker.addLLMCall(
-        `variant/${safeValue.slice(0, 20)}`,
-        resultUsage.input_tokens ?? 0,
-        resultUsage.output_tokens ?? 0,
-        "google/gemini-2.0-flash",
-        Date.now() - agentStart,
-      );
-    }
-
-    const output = result.output;
-    if (!output?.price || output.price === "null") return null;
-    return stripCurrencySymbol(String(output.price));
-  } catch {
-    return null;
-  } finally {
-    variantTracker.addSession(session.id, Date.now() - sessionStartMs);
-    variantTracker.printSummary();
-    if (stagehand) {
-      try {
-        await stagehand.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    await destroySession(session.id);
-  }
+  return null;
 }
 
-/** Max variants to resolve per option group (e.g. 5 out of 30 colors). */
-const MAX_VARIANTS_PER_GROUP = parseInt(
-  process.env.QUERY_MAX_VARIANTS_PER_GROUP ?? "3",
-  10,
-);
-const MAX_TOTAL_VARIANT_TASKS = parseInt(
-  process.env.QUERY_MAX_TOTAL_VARIANT_TASKS ?? "10",
-  10,
-);
-
-/** Resolve per-variant prices via concurrent Browserbase sessions. */
+/** Degraded: returns options unchanged (no per-variant price resolution). */
 export async function resolveVariantPricesViaBrowser(
-  url: string,
+  _url: string,
   options: ProductOption[],
-  concurrency = parseInt(process.env.QUERY_VARIANT_CONCURRENCY ?? "3", 10),
 ): Promise<ProductOption[]> {
-  // Build task list: flatten option groups into { optionName, value } pairs
-  // Cap per group to avoid spawning dozens of sessions for products with many variants
-  const tasks: Array<{ optionName: string; value: string }> = [];
-  for (const opt of options) {
-    // Skip groups where all values already have prices
-    if (opt.prices && opt.values.every((v) => opt.prices![v] != null)) continue;
-    let count = 0;
-    for (const value of opt.values) {
-      // Skip individual values that already have a price
-      if (opt.prices?.[value] != null) continue;
-      if (count >= MAX_VARIANTS_PER_GROUP) break;
-      if (tasks.length >= MAX_TOTAL_VARIANT_TASKS) break;
-      tasks.push({ optionName: opt.name, value });
-      count++;
-    }
-    if (tasks.length >= MAX_TOTAL_VARIANT_TASKS) break;
-  }
-
-  if (tasks.length === 0) return options;
-
-  const results = await concurrencyPool(
-    tasks,
-    (task) => fetchVariantPriceBrowser(url, task.optionName, task.value),
-    concurrency,
-  );
-
-  // Build price maps from fulfilled results
-  const priceMaps = new Map<string, Map<string, string>>();
-  for (let i = 0; i < tasks.length; i++) {
-    const result = results[i]!;
-    if (result.status === "fulfilled" && result.value != null) {
-      const task = tasks[i]!;
-      if (!priceMaps.has(task.optionName))
-        priceMaps.set(task.optionName, new Map());
-      priceMaps.get(task.optionName)!.set(task.value, result.value);
-    }
-  }
-
-  // Merge into options
-  return options.map((opt) => {
-    const resolved = priceMaps.get(opt.name);
-    if (!resolved || resolved.size === 0) return opt;
-    // Combine existing prices with resolved ones
-    const merged: Record<string, string> = { ...(opt.prices ?? {}) };
-    for (const [value, price] of resolved) {
-      merged[value] = price;
-    }
-    // Same-price filter: if all prices are identical, omit the map
-    const uniquePrices = new Set(Object.values(merged));
-    if (uniquePrices.size <= 1) return { ...opt, prices: undefined };
-    return { ...opt, prices: merged };
-  });
+  return options;
 }
 
-// ---- Browserbase cart discovery via Stagehand ----
-
-const CartPricingSchema = z.object({
-  name: z.string().describe("Product name"),
-  price: z.string().describe("Product price without currency symbol"),
-  tax: z.string().optional().describe("Tax amount"),
-  shipping: z.string().optional().describe("Shipping cost"),
-  total: z.string().optional().describe("Order total"),
-});
+// ---- Browser cart discovery (degraded to render + extract) ----
 
 export async function discoverViaCart(
   url: string,
-  shipping: ShippingInfo,
+  _shipping: ShippingInfo,
 ): Promise<DiscoveryResult> {
-  const modelApiKey = getModelApiKey();
-  const session = await createSession();
-  const cartTracker = new CostTracker();
-  const sessionStartMs = Date.now();
-  let stagehand: InstanceType<typeof Stagehand> | undefined;
-
-  try {
-    stagehand = new Stagehand({
-      env: "BROWSERBASE",
-      apiKey: process.env.BROWSERBASE_API_KEY!,
-      projectId: process.env.BROWSERBASE_PROJECT_ID!,
-      model: {
-        modelName: "google/gemini-2.5-flash",
-        apiKey: modelApiKey,
-      },
-      browserbaseSessionID: session.id,
-    });
-
-    await stagehand.init();
-    const page = stagehand.context.activePage()!;
-
-    await page.goto(url, { waitUntil: "domcontentloaded", timeoutMs: 30000 });
-    await page.waitForTimeout(3000);
-
-    let actStart = Date.now();
-    await stagehand.act("Add this product to cart");
-    cartTracker.addLLMCall(
-      "cart/add-to-cart",
-      0,
-      0,
-      "google/gemini-2.5-flash",
-      Date.now() - actStart,
+  const result = await discoverViaBrowser(url);
+  if (!result) {
+    throw new Error(
+      "Price extraction failed: could not extract product via local browser render",
     );
-    await page.waitForTimeout(1000);
-
-    actStart = Date.now();
-    await stagehand.act("Go to cart or proceed to checkout");
-    cartTracker.addLLMCall(
-      "cart/go-to-checkout",
-      0,
-      0,
-      "google/gemini-2.5-flash",
-      Date.now() - actStart,
-    );
-    await page.waitForTimeout(2000);
-
-    // Fill shipping if applicable (sanitize to prevent prompt injection)
-    const safe = sanitizeShipping(shipping);
-    try {
-      actStart = Date.now();
-      await stagehand.act(
-        "Fill shipping information: name=%x_shipping_name%, street=%x_shipping_street%, city=%x_shipping_city%, state=%x_shipping_state%, zip=%x_shipping_zip%, country=%x_shipping_country%, email=%x_shipping_email%, phone=%x_shipping_phone%",
-        {
-          variables: {
-            x_shipping_name: safe.name,
-            x_shipping_street: safe.street,
-            x_shipping_city: safe.city,
-            x_shipping_state: safe.state,
-            x_shipping_zip: safe.zip,
-            x_shipping_country: safe.country,
-            x_shipping_email: safe.email,
-            x_shipping_phone: safe.phone,
-          },
-        },
-      );
-      cartTracker.addLLMCall(
-        "cart/fill-shipping",
-        0,
-        0,
-        "google/gemini-2.5-flash",
-        Date.now() - actStart,
-      );
-      await page.waitForTimeout(1000);
-    } catch {
-      // Shipping form may not be visible yet
-    }
-
-    const extractStart = Date.now();
-    const pricing = await stagehand.extract(
-      "Extract the product name, price, tax, shipping cost, and order total from this cart/checkout page",
-      CartPricingSchema,
-    );
-    cartTracker.addLLMCall(
-      "cart/extract-pricing",
-      0,
-      0,
-      "google/gemini-2.5-flash",
-      Date.now() - extractStart,
-    );
-
-    // Strip currency symbols from extracted values
-    const stripCurrency = (v: string | undefined): string | undefined =>
-      v ? v.replace(/^[^\d]*/, "").replace(/[^\d.]/g, "") || v : v;
-
-    return {
-      name: pricing.name,
-      price: stripCurrency(pricing.price) || pricing.price,
-      tax: stripCurrency(pricing.tax),
-      shipping: stripCurrency(pricing.shipping),
-      total: stripCurrency(pricing.total),
-      method: "browserbase_cart",
-    };
-  } finally {
-    cartTracker.addSession(session.id, Date.now() - sessionStartMs);
-    cartTracker.printSummary();
-    if (stagehand) {
-      try {
-        await stagehand.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    await destroySession(session.id);
   }
+  return {
+    name: result.name,
+    price: result.price,
+    method: "browserbase_cart",
+    image_url: result.image_url,
+  };
 }
 
 // ---- Main entry: Tier 1 → Tier 2 fallback ----
 
 export async function discoverPrice(
   url: string,
-  shipping?: ShippingInfo,
+  _shipping?: ShippingInfo,
 ): Promise<DiscoveryResult> {
-  // Tier 1: Fast server-side scrape
+  // Tier 1: Fast server-side scrape (JSON-LD / meta)
   const scraped = await scrapePrice(url);
   if (scraped) return scraped;
 
-  // Tier 2: Browserbase cart (requires shipping)
-  if (!shipping) {
-    throw new Error(
-      "Price extraction failed: no structured data found and no shipping info provided for cart discovery",
-    );
+  // Tier 2: Local Playwright render + OpenRouter extraction
+  const browsered = await discoverViaBrowser(url);
+  if (browsered) {
+    return {
+      name: browsered.name,
+      price: browsered.price,
+      method: "browserbase_cart",
+      image_url: browsered.image_url,
+    };
   }
 
-  return discoverViaCart(url, shipping);
+  throw new Error(
+    "Price extraction failed: no structured data found and local render did not yield a price",
+  );
 }
 
 // ---- Variant extraction from JSON-LD ----
@@ -840,62 +519,31 @@ export async function scrapePriceWithOptions(
   return null;
 }
 
-// ---- Main discovery entry point: Firecrawl (primary) → Scrape (fallback) → Browserbase ----
+// ---- Main discovery entry point: Firecrawl (static/render) → Scrape → Browser ----
 
 export async function discoverProduct(
   url: string,
 ): Promise<FullDiscoveryResult> {
-  // Primary: Firecrawl (rich data + per-variant pricing)
-  // discoverViaFirecrawl already fires Exa internally in parallel — no separate exaPromise needed.
+  // Primary: crawling discovery (static fetch → local render + OpenRouter, + Exa)
   const firecrawled = await discoverViaFirecrawl(url);
   if (firecrawled?.error === "product_not_found") return firecrawled;
-  if (firecrawled) return maybeResolveVariantPrices(url, firecrawled);
+  if (firecrawled) return firecrawled;
 
-  // Tier 2: Server-side scrape (free, fast)
+  // Tier 2: Server-side scrape with options (free, fast)
   const scraped = await scrapePriceWithOptions(url);
   if (scraped) {
-    const result: FullDiscoveryResult = {
+    return {
       name: scraped.name,
       price: scraped.price,
       image_url: scraped.image_url,
       method: scraped.method,
       options: scraped.options,
     };
-    return maybeResolveVariantPrices(url, result);
   }
 
-  // Tier 3: Browserbase headless Chrome + LLM extract
-  // (discoverViaBrowser already calls resolveVariantPricesViaBrowser internally)
+  // Tier 3: Local Playwright render + OpenRouter extract
   const browsered = await discoverViaBrowser(url);
   if (browsered) return browsered;
 
-  throw new BloonError(
-    ErrorCodes.QUERY_FAILED,
-    `Product discovery failed for ${url}: no structured data found`,
-  );
-}
-
-/**
- * If a discovery result has options without variant prices, resolve them
- * via concurrent Browserbase sessions (Stagehand agent clicks each variant).
- */
-async function maybeResolveVariantPrices(
-  url: string,
-  result: FullDiscoveryResult,
-): Promise<FullDiscoveryResult> {
-  const options = result.options;
-  if (!options || options.length === 0) return result;
-
-  // Check if any option group is missing prices
-  const needsPriceResolution = options.some(
-    (opt) => !opt.prices || Object.keys(opt.prices).length === 0,
-  );
-  if (!needsPriceResolution) return result;
-
-  try {
-    const resolved = await resolveVariantPricesViaBrowser(url, options);
-    return { ...result, options: resolved };
-  } catch {
-    return result;
-  }
+  throw new Error(`Product discovery failed for ${url}: no structured data found`);
 }

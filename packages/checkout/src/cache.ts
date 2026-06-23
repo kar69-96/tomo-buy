@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import type { DomainCache } from "@bloon/core";
-import type { Page } from "@browserbasehq/stagehand";
+import type { Page } from "playwright";
 
 // ---- CDP cookie response type ----
 
@@ -80,16 +80,14 @@ export function saveDomainCache(cache: DomainCache): void {
   fs.renameSync(tmpPath, filepath);
 }
 
-// ---- Extract from browser (via CDP) ----
+// ---- Extract from browser (via Playwright context) ----
 
 export async function extractDomainCache(
   page: Page,
   domain: string,
 ): Promise<DomainCache> {
-  // Get cookies via CDP
-  const { cookies: allCookies } = await page.sendCDP<{
-    cookies: CdpCookie[];
-  }>("Network.getCookies");
+  // Get cookies via the Playwright browser context
+  const allCookies = await page.context().cookies();
 
   const safeCookies = allCookies
     .filter((c) => isSafeCookie(c.name))
@@ -122,22 +120,22 @@ export async function extractDomainCache(
   };
 }
 
-// ---- Inject into browser (via CDP) ----
+// ---- Inject into browser (via Playwright context) ----
 
 export async function injectDomainCache(
   page: Page,
   cache: DomainCache,
 ): Promise<void> {
-  // Set cookies via CDP
-  for (const c of cache.cookies) {
-    await page.sendCDP("Network.setCookie", {
+  // Set cookies via the Playwright browser context
+  await page.context().addCookies(
+    cache.cookies.map((c) => ({
       name: c.name,
       value: c.value,
       domain: c.domain,
       path: c.path,
       expires: c.expires,
-    });
-  }
+    })),
+  );
 
   // Note: localStorage injection is deferred — it must happen AFTER
   // navigating to the target domain (localStorage is domain-scoped).

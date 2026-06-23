@@ -4,7 +4,7 @@
  * with enhancements for reCAPTCHA, hCaptcha, and Turnstile detection.
  */
 
-import type { Page } from "@browserbasehq/stagehand";
+import type { Page } from "playwright";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 1_000;
@@ -74,5 +74,5 @@ export async function waitForCaptchaSolve(
   }
 
   // Wait for page to settle after challenge resolution
-  await page.waitForLoadState("domcontentloaded", 10_000).catch(() => {});
+  await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => {});
 }

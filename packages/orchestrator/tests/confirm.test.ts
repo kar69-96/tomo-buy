@@ -8,12 +8,24 @@ import type { Order } from "@bloon/core";
 
 vi.mock("@bloon/checkout", () => ({
   runCheckout: vi.fn(),
+  issueAndRevealCard: vi.fn(),
 }));
 
-import { runCheckout } from "@bloon/checkout";
+import { runCheckout, issueAndRevealCard } from "@bloon/checkout";
 import { confirm } from "../src/confirm.js";
 
 const mockedRunCheckout = vi.mocked(runCheckout);
+const mockedIssueCard = vi.mocked(issueAndRevealCard);
+
+const FAKE_CARD = {
+  id: "card_test01",
+  card: {
+    number: "4242424242424242",
+    expiry: "12/29",
+    cvv: "123",
+    cardholder_name: "Test User",
+  },
+};
 
 // ---- Test helpers ----
 
@@ -71,6 +83,7 @@ beforeEach(() => {
   process.env.BLOON_DATA_DIR = tmpDir;
   setupConfig();
   vi.clearAllMocks();
+  mockedIssueCard.mockResolvedValue(FAKE_CARD);
 });
 
 afterEach(() => {
@@ -98,6 +111,12 @@ describe("confirm", () => {
     expect(result.receipt.fee).toBe("0.20");
     expect(result.receipt.order_number).toBe("ORD-12345");
     expect(result.receipt.browserbase_session_id).toBe("sess_abc");
+
+    // A single-use Agentcard was issued and injected into checkout.
+    expect(mockedIssueCard).toHaveBeenCalledOnce();
+    expect(mockedRunCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({ card: FAKE_CARD.card }),
+    );
   });
 
   it("confirm expired order throws ORDER_EXPIRED", async () => {

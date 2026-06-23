@@ -5,7 +5,7 @@
  * Classification signal constants live in @bloon/core/classification-signals
  * and are shared with the HTTP engine's cheerio-based classifier.
  */
-import type { Page } from "@browserbasehq/stagehand";
+import type { Page } from "playwright";
 import { scanIframesForCardFields } from "./agent-tools.js";
 import {
   type PageType,

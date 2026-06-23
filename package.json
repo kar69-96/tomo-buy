@@ -7,11 +7,8 @@
     "build": "pnpm -r build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:checkout": "tsx tests/browserbase-refinement/test-checkout.ts",
-    "test:checkout:loop": "tsx tests/browserbase-refinement/test-checkout-loop.ts",
-    "firecrawl:start": "bash packages/crawling/scripts/start.sh",
-    "firecrawl:stop": "bash packages/crawling/scripts/stop.sh",
-    "firecrawl:health": "bash packages/crawling/scripts/health.sh"
+    "start": "node --env-file=.env packages/api/dist/index.js",
+    "dev": "pnpm build && pnpm start"
   },
   "devDependencies": {
     "@bloon/api": "workspace:*",

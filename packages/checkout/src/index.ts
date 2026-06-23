@@ -55,12 +55,37 @@ export {
 export {
   createSession,
   destroySession,
-  getBrowserbaseConfig,
-  getModelApiKey,
-  getQueryModelApiKey,
-  getAnthropicApiKey,
+  getOpenRouterKey,
 } from "./session.js";
-export type { BrowserbaseSession, SessionOptions } from "./session.js";
+export type { BrowserSession, BrowserbaseSession, SessionOptions } from "./session.js";
+
+// ---- Agentcard funding ----
+export {
+  issueCard,
+  revealCard,
+  read3dsCodes,
+  issueAndRevealCard,
+  preflight,
+  parseCardId,
+  parseCardDetails,
+  parse3dsCodes,
+} from "./agentcard.js";
+export type { AgentcardPreflight } from "./agentcard.js";
+
+// ---- Page actions (OpenRouter-driven) ----
+export { playwrightAct } from "./act.js";
+export type { ActOptions } from "./act.js";
+
+// ---- LLM (OpenRouter) ----
+export {
+  complete,
+  completePrompt,
+  completeJson,
+  parseJsonFromText,
+  getAgentModel,
+  getExtractModel,
+} from "./llm.js";
+export type { ChatMessage, CompleteOptions } from "./llm.js";
 
 // ---- Domain cache ----
 export {

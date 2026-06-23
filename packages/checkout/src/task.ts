@@ -1,5 +1,4 @@
-import { Stagehand } from "@browserbasehq/stagehand";
-import type { Page } from "@browserbasehq/stagehand";
+import type { Page } from "playwright";
 import type { Order, ShippingInfo } from "@bloon/core";
 import {
   buildCredentials,
@@ -15,8 +14,9 @@ import {
   injectDomainCache,
   injectLocalStorage,
 } from "./cache.js";
-import { createSession, destroySession, getModelApiKey } from "./session.js";
+import { createSession, destroySession } from "./session.js";
 import type { SessionOptions } from "./session.js";
+import { playwrightAct } from "./act.js";
 import {
   scriptedDismissPopups,
   scriptedFillShipping,
@@ -85,6 +85,8 @@ export interface CheckoutInput {
   selections?: Record<string, string>;
   dryRun?: boolean;
   sessionOptions?: SessionOptions;
+  /** Single-use card to inject (Agentcard). Falls back to the .env card if omitted. */
+  card?: import("@bloon/core").CardInfo;
 }
 
 // ---- Error classification ----
@@ -426,8 +428,8 @@ export async function runCheckout(
   const url = order.product.url;
   const domain = extractDomain(url);
 
-  // 1. Build credentials
-  const creds = buildCredentials(shipping);
+  // 1. Build credentials (Agentcard card injected when provided)
+  const creds = buildCredentials(shipping, input.card);
   const stagehandVars = getStagehandVariables(creds);
   const cdpCreds = getCdpCredentials(creds);
 
@@ -469,41 +471,28 @@ export async function runCheckout(
     }
   }
 
-  // 4. Validate keys early (fail fast with clear error)
-  const modelApiKey = getModelApiKey();
-
-  // 5. Create Browserbase session
+  // 4. Create local Playwright session (Chrome)
   const session = await createSession(input.sessionOptions);
-  let stagehand: InstanceType<typeof Stagehand> | undefined;
   const startMs = Date.now();
 
   try {
-    // 6. Init Stagehand
-    stagehand = new Stagehand({
-      env: "BROWSERBASE",
-      apiKey: process.env.BROWSERBASE_API_KEY!,
-      projectId: process.env.BROWSERBASE_PROJECT_ID!,
-      model: {
-        modelName: "google/gemini-2.5-flash",
-        apiKey: modelApiKey,
-      },
-      browserbaseSessionID: session.id,
-      experimental: true,
-    });
+    // 5. The page the checkout loop drives
+    const page: Page = session.page;
 
-    await stagehand.init();
-    const page: Page = stagehand.context.activePage()!;
-
-    // 7. Inject domain cache cookies (before navigation)
+    // 6. Inject domain cache cookies (before navigation)
     const existingCache = loadDomainCache(domain);
     if (existingCache) {
-      await injectDomainCache(page, existingCache);
+      try {
+        await injectDomainCache(page, existingCache);
+      } catch {
+        // best-effort cookie restore
+      }
     }
 
-    // 8. Navigate to product URL
+    // 7. Navigate to product URL
     await page.goto(url, {
       waitUntil: "domcontentloaded",
-      timeoutMs: 30000,
+      timeout: 30000,
     });
     await page.waitForTimeout(5000);
 
@@ -714,7 +703,7 @@ export async function runCheckout(
               const checkoutUrl = new URL(page.url());
               checkoutUrl.pathname = "/checkout";
               checkoutUrl.search = "";
-              await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeoutMs: 15000 });
+              await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
               advanced = true;
             } catch {
               // Fall through to LLM
@@ -787,7 +776,7 @@ export async function runCheckout(
                   const checkoutUrl = new URL(page.url());
                   checkoutUrl.pathname = "/checkout";
                   checkoutUrl.search = "";
-                  await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeoutMs: 15000 });
+                  await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
                   advanced = true;
                 } catch {
                   // Fall through to LLM
@@ -814,7 +803,7 @@ export async function runCheckout(
               const checkoutUrl = new URL(page.url());
               checkoutUrl.pathname = "/checkout";
               checkoutUrl.search = "";
-              await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeoutMs: 15000 });
+              await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
               advanced = true;
             } catch {
               // Fall through to LLM
@@ -876,8 +865,9 @@ export async function runCheckout(
           if (filled.length < 3 && state.llmCalls < MAX_LLM_CALLS) {
             console.log(`  [shipping] only ${filled.length} fields via script, supplementing with LLM`);
             try {
-              await stagehand.act(
-                `Fill the shipping/contact form: email=%x_shipping_email%, name=%x_shipping_name%, address=%x_shipping_street%, city=%x_shipping_city%, state=%x_shipping_state%, zip=%x_shipping_zip%, phone=%x_shipping_phone%. Skip any fields already filled.`,
+              await playwrightAct(
+                page,
+                `Fill the shipping/contact form (email, full name, street address, city, state, zip, phone). Skip any fields already filled.`,
                 { variables: stagehandVars },
               );
               state.llmCalls++;
@@ -915,8 +905,9 @@ export async function runCheckout(
             if (shippingFilled.length < 3 && state.llmCalls < MAX_LLM_CALLS) {
               console.log(`  [payment-page shipping] only ${shippingFilled.length} fields via script, supplementing with LLM`);
               try {
-                await stagehand.act(
-                  `Fill the shipping/contact form fields on this page: email=%x_shipping_email%, name=%x_shipping_name%, address=%x_shipping_street%, city=%x_shipping_city%, state=%x_shipping_state%, zip=%x_shipping_zip%, phone=%x_shipping_phone%. Skip any fields already filled.`,
+                await playwrightAct(
+                  page,
+                  `Fill the shipping/contact form fields on this page (email, full name, street address, city, state, zip, phone). Skip any fields already filled.`,
                   { variables: stagehandVars },
                 );
                 state.llmCalls++;
@@ -1076,7 +1067,7 @@ export async function runCheckout(
             try {
               const origin = new URL(page.url()).origin;
               console.log(`  [recovery] help page detected, navigating to ${origin}/cart`);
-              await page.goto(`${origin}/cart`, { waitUntil: "domcontentloaded", timeoutMs: 15000 });
+              await page.goto(`${origin}/cart`, { waitUntil: "domcontentloaded", timeout: 15000 });
               advanced = true;
             } catch {
               // Fall through to LLM
@@ -1153,16 +1144,10 @@ export async function runCheckout(
         const isStalled = state.stallCount >= 2;
         const instruction = buildPageInstruction(pageType, input, state, isStalled);
 
-        // For shipping forms with no scripted fill, pass variables for LLM substitution
-        const actOptions: { variables?: Record<string, string> } = {};
-        if (pageType === "shipping-form" && !state.shippingFilled) {
-          actOptions.variables = stagehandVars;
-        }
-
         console.log(`  [llm fallback ${state.llmCalls + 1}/${MAX_LLM_CALLS}${isStalled ? " STALLED" : ""}] ${instruction.slice(0, 100)}...`);
 
         try {
-          await stagehand.act(instruction, actOptions);
+          await playwrightAct(page, instruction, { variables: stagehandVars });
           state.llmCalls++;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -1335,14 +1320,7 @@ export async function runCheckout(
       durationMs: Date.now() - startMs,
     };
   } finally {
-    // Destroy session
-    if (stagehand) {
-      try {
-        await stagehand.close();
-      } catch {
-        // Ignore close errors
-      }
-    }
-    await destroySession(session.id);
+    // Close the local browser session
+    await destroySession(session);
   }
 }

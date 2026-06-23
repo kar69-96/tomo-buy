@@ -1,4 +1,4 @@
-import type { Page } from "@browserbasehq/stagehand";
+import type { Page } from "playwright";
 
 // ---- Field observed by Stagehand ----
 

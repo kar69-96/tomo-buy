@@ -23,7 +23,8 @@ metadata: {"category":"commerce","interface":"rest","auth":"none"}
 - Physical products need a shipping address -- pass it in buy or server will ask
 - Use query to discover product options (size, color) and required fields before buying
 - 2% flat fee on all purchases
-- All purchases execute via browser checkout with stored credit card
+- All purchases execute via local browser checkout (Playwright/Chrome), paying with a
+  single-use virtual card issued per purchase by Agentcard (real money)
 
 ---
 

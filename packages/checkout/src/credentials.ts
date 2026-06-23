@@ -1,5 +1,5 @@
 import { getCardInfo, getBillingInfo } from "@bloon/core";
-import type { ShippingInfo, CredentialsMap } from "@bloon/core";
+import type { ShippingInfo, CredentialsMap, CardInfo } from "@bloon/core";
 
 // ---- CDP-only fields (card data — never sent through Stagehand LLM) ----
 
@@ -55,18 +55,26 @@ export function sanitizeShipping(shipping: ShippingInfo): ShippingInfo {
   };
 }
 
-// ---- Build full credentials map from .env + shipping ----
+// ---- Build full credentials map from card + shipping ----
 
-export function buildCredentials(shipping: ShippingInfo): CredentialsMap {
-  const card = getCardInfo();
+/**
+ * Build the credentials map. The card is injected (Agentcard single-use card)
+ * when provided; otherwise it falls back to the static .env card (FUNDING=static
+ * / debugging). Card values flow only to the CDP fill path, never to the LLM.
+ */
+export function buildCredentials(
+  shipping: ShippingInfo,
+  card?: CardInfo,
+): CredentialsMap {
+  const cardInfo = card ?? getCardInfo();
   const billing = getBillingInfo();
   const safe = sanitizeShipping(shipping);
 
   return {
-    x_card_number: card.number,
-    x_card_expiry: card.expiry,
-    x_card_cvv: card.cvv,
-    x_cardholder_name: card.cardholder_name,
+    x_card_number: cardInfo.number,
+    x_card_expiry: cardInfo.expiry,
+    x_card_cvv: cardInfo.cvv,
+    x_cardholder_name: cardInfo.cardholder_name,
     x_billing_street: billing.street,
     x_billing_city: billing.city,
     x_billing_state: billing.state,

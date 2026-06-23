@@ -15,6 +15,31 @@ export function getPort(): number {
   return Number(process.env.PORT) || 3000;
 }
 
+// ---- Funding mode ----
+
+export type FundingMode = "agentcard" | "static";
+
+/**
+ * How checkout is funded:
+ * - "agentcard" (default): issue a single-use Agentcard card per purchase.
+ * - "static": use the static card from .env (debugging only).
+ */
+export function getFundingMode(): FundingMode {
+  return process.env.FUNDING === "static" ? "static" : "agentcard";
+}
+
+/** Buffer over the item price to cover tax/shipping (default 15%). */
+export function getAgentcardBufferPct(): number {
+  const v = Number(process.env.AGENTCARD_BUFFER_PCT);
+  return Number.isFinite(v) && v >= 0 ? v : 0.15;
+}
+
+/** Hard ceiling (dollars) on any single issued card (default $500). */
+export function getAgentcardMaxAmount(): number {
+  const v = Number(process.env.AGENTCARD_MAX_AMOUNT);
+  return Number.isFinite(v) && v > 0 ? v : 500;
+}
+
 // ---- Credential accessors ----
 
 export function getCardInfo(): CardInfo {

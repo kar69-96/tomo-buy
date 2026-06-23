@@ -1,14 +1,27 @@
 import {
   type Order,
   type Receipt,
+  type CardInfo,
   BloonError,
   ErrorCodes,
   getOrder,
   updateOrder,
+  getFundingMode,
+  getAgentcardBufferPct,
+  getAgentcardMaxAmount,
 } from "@bloon/core";
-import { runCheckout } from "@bloon/checkout";
+import { runCheckout, issueAndRevealCard } from "@bloon/checkout";
 import { selectEngine, runHTTPCheckout, invalidateProfile } from "@bloon/checkout-http";
 import { buildReceipt } from "./receipts.js";
+
+/** Compute the dollar amount to fund a single-use card with, from the order. */
+function fundingAmountDollars(order: Order): number {
+  const price = parseFloat(order.payment.price || order.product.price || "0");
+  const base = Number.isFinite(price) && price > 0 ? price : 0;
+  const withBuffer = base * (1 + getAgentcardBufferPct());
+  const capped = Math.min(withBuffer, getAgentcardMaxAmount());
+  return Math.ceil(capped * 100) / 100;
+}
 
 /**
  * Extract the bare domain from a URL, stripping "www." prefix.
@@ -78,10 +91,28 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
     }
 
     const domain = getDomain(order.product.url);
-    const engine = selectEngine(domain);
-    let checkoutResult;
 
-    if (engine === "http") {
+    // 6a. Fund the purchase: issue a single-use Agentcard sized to the order
+    //     total (item price + buffer for tax/shipping, capped). Only the opaque
+    //     card id is logged — the PAN/CVV/expiry go straight to CDP injection.
+    let card: CardInfo | undefined;
+    if (getFundingMode() === "agentcard") {
+      const amount = fundingAmountDollars(order);
+      const issued = await issueAndRevealCard(amount);
+      card = issued.card;
+      console.log(`[funding] issued single-use Agentcard ${issued.id} for $${amount.toFixed(2)}`);
+    }
+
+    // The Agentcard path REQUIRES the browser checkout (card injected via CDP).
+    // The HTTP engine uses static credentials, so it's only used when explicitly
+    // opted into AND funding is static (debugging).
+    const useHttp =
+      process.env.CHECKOUT_ENGINE === "http" &&
+      getFundingMode() === "static" &&
+      selectEngine(domain) === "http";
+
+    let checkoutResult;
+    if (useHttp) {
       const httpResult = await runHTTPCheckout({
         order,
         shipping: order.shipping,
@@ -89,7 +120,6 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
       });
 
       if (httpResult.success) {
-        // Map HTTPCheckoutResult to match expected shape
         checkoutResult = {
           success: true as const,
           orderNumber: httpResult.orderNumber,
@@ -99,12 +129,13 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
           durationMs: httpResult.durationMs,
         };
       } else {
-        // HTTP engine failed — invalidate cache and fall back to Stagehand
+        // HTTP engine failed — invalidate cache and fall back to the browser path
         invalidateProfile(domain);
         checkoutResult = await runCheckout({
           order,
           shipping: order.shipping,
           selections: order.selections,
+          card,
         });
       }
     } else {
@@ -112,6 +143,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
         order,
         shipping: order.shipping,
         selections: order.selections,
+        card,
       });
     }
 
