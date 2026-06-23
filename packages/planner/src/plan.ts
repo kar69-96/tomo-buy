@@ -144,8 +144,20 @@ function normalizeKey(k: string): string {
 }
 
 /**
+ * A `quantity: "1"` selection is the page default — picking it changes nothing,
+ * but ANY non-empty selection forces the product page onto the slow LLM
+ * "select these options" path instead of the fast scripted Add-to-Cart. Drop a
+ * redundant quantity-of-1 so single-item buys take the scripted path; keep
+ * quantity 2+ (a real multi-buy intent). Matched on the normalized key/value.
+ */
+function isRedundantQuantity(key: string, value: string): boolean {
+  return normalizeKey(key) === "quantity" && value.trim() === "1";
+}
+
+/**
  * Selections the checkout page handler can act on: flat strings with the
- * product-identity keys removed (those describe the product, not a variant).
+ * product-identity keys removed (those describe the product, not a variant) and
+ * a redundant default quantity dropped.
  */
 function toCheckoutSelections(
   obj: Record<string, unknown> | undefined,
@@ -154,6 +166,7 @@ function toCheckoutSelections(
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(flat)) {
     if (NON_VARIANT_KEYS.has(normalizeKey(k))) continue;
+    if (isRedundantQuantity(k, v)) continue;
     out[k] = v;
   }
   return out;

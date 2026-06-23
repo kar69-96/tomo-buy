@@ -93,4 +93,13 @@ describe("reconcileSteps selection filtering", () => {
     );
     expect(sel).toEqual({ scent: "lavender" });
   });
+
+  it("drops a redundant default quantity of 1 (keeps the scripted fast path)", () => {
+    // quantity:1 alone is a no-op → no selections → scripted Add-to-Cart.
+    expect(purchaseSelections(makeBrief({ quantity: "1" }))).toBeUndefined();
+  });
+
+  it("keeps a real multi-buy quantity", () => {
+    expect(purchaseSelections(makeBrief({ quantity: "2" }))).toEqual({ quantity: "2" });
+  });
 });

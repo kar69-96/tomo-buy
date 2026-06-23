@@ -392,6 +392,46 @@ export function isShopifyCheckout(url: string): boolean {
   );
 }
 
+// ---- Page-health (bot-block) classification ----
+
+export interface PageHealthSignals {
+  /** Trimmed body text length. */
+  charCount: number;
+  /** Whitespace-delimited word count of the body text. */
+  wordCount: number;
+  /** Count of VISIBLE interactive controls (links, buttons, inputs, selects). */
+  visibleControls: number;
+}
+
+export interface PageHealthVerdict {
+  blocked: boolean;
+  reason?: string;
+}
+
+/**
+ * Decide whether an initially-navigated page is unusable (bot-blocked, a
+ * challenge wall, or a failed render) versus a real, actionable page. A genuine
+ * product/checkout/search page always carries substantial text AND at least one
+ * visible interactive control. A page with almost no text, or with zero visible
+ * controls, can't be driven — fail fast with an accurate reason instead of
+ * burning the whole LLM budget and mislabeling it a "stuck" step. Site-agnostic.
+ */
+export function classifyPageHealth(s: PageHealthSignals): PageHealthVerdict {
+  if (s.charCount < 500 || s.wordCount < 50) {
+    return {
+      blocked: true,
+      reason: `page rendered minimal content (${s.charCount} chars, ${s.wordCount} words) — site likely blocks automated browsers`,
+    };
+  }
+  if (s.visibleControls === 0) {
+    return {
+      blocked: true,
+      reason: `page rendered no actionable controls (0 visible links/buttons/inputs) — likely a challenge wall or failed render`,
+    };
+  }
+  return { blocked: false };
+}
+
 // ---- Price tolerance ----
 
 function isPriceAcceptable(expected: string, actual: string): boolean {
@@ -737,19 +777,32 @@ export async function runCheckout(
       }
     } catch { /* URL parsing failed — continue */ }
 
-    // 8a-bot. Bot-block detection — minimal page content signals bot-blocked site
+    // 8a-bot. Bot-block detection — minimal content OR no actionable controls
+    // signal a bot-blocked / challenge / failed-render page (see classifyPageHealth).
     try {
-      const bodyText = await page.evaluate(() => document.body.textContent || "");
-      const wordCount = bodyText.trim().split(/\s+/).filter((w: string) => w.length > 0).length;
-      const charCount = bodyText.trim().length;
-      if (charCount < 500 || wordCount < 50) {
-        console.log(`  [bot-blocked] page content too small: ${charCount} chars, ${wordCount} words`);
+      const signals = await page.evaluate(() => {
+        const bodyText = (document.body?.textContent || "").trim();
+        const visible = (el: Element): boolean => (el as HTMLElement).offsetParent !== null;
+        const controls = Array.from(
+          document.querySelectorAll('a[href], button, input, select, textarea, [role="button"]'),
+        ).filter(visible);
+        return {
+          charCount: bodyText.length,
+          wordCount: bodyText.split(/\s+/).filter((w) => w.length > 0).length,
+          visibleControls: controls.length,
+        };
+      });
+      const verdict = classifyPageHealth(signals);
+      if (verdict.blocked) {
+        console.log(
+          `  [bot-blocked] ${verdict.reason} (${signals.charCount} chars, ${signals.wordCount} words, ${signals.visibleControls} controls)`,
+        );
         return {
           success: false,
           sessionId: session.id,
           replayUrl: session.replayUrl,
           failedStep: "navigate" as CheckoutStep,
-          errorMessage: `bot_blocked: page rendered minimal content (${charCount} chars, ${wordCount} words) — site likely blocks automated browsers`,
+          errorMessage: `bot_blocked: ${verdict.reason}`,
           durationMs: Date.now() - startMs,
         };
       }
