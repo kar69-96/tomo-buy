@@ -5,5 +5,15 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     passWithNoTests: false,
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/start-ui.ts', // process entry point; exercised by the live run
+      ],
+      reporter: ['text', 'json-summary'],
+      thresholds: { lines: 80, functions: 80, statements: 80, branches: 80 },
+    },
   },
 });
