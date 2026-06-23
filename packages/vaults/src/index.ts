@@ -1,16 +1,14 @@
-import type { VaultA, VaultB, AgentCredential, PiiField } from '@tomo/core';
-import { NotImplementedError } from '@tomo/core';
+/**
+ * @tomo/vaults — Vault A (agent secrets) + Vault B (user PII).
+ *
+ * Prime directive: neither vault ever returns data into LLM context. Vault A is
+ * read only by the Executor at login; Vault B releases ONE field at a time to the
+ * Executor at fill time, logging each release. Everything is encrypted at rest
+ * (AES-256-GCM via crypto.ts).
+ */
 
-/** Stub Vault A — Executor-only agent-secret store. */
-export class VaultAStub implements VaultA {
-  async read(_user: string, _merchant: string): Promise<AgentCredential> {
-    throw new NotImplementedError('vaults.VaultA.read');
-  }
-}
-
-/** Stub Vault B — field-level PII release, Executor-only. */
-export class VaultBStub implements VaultB {
-  async releaseField(_user: string, _field: PiiField): Promise<string> {
-    throw new NotImplementedError('vaults.VaultB.releaseField');
-  }
-}
+export { encrypt, decrypt, deriveKey, type EncryptedBlob } from './crypto.js';
+export { type VaultStore, InMemoryStore, EncryptedFileStore, selectStore } from './store.js';
+export { AuditLog, type AuditEntry } from './audit.js';
+export { VaultA } from './vault-a.js';
+export { VaultB } from './vault-b.js';
