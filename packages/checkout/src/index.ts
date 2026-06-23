@@ -103,15 +103,28 @@ export {
 } from "./gemini.js";
 export type { GeminiRequest } from "./gemini.js";
 
-// ---- Domain cache ----
+// ---- Domain cache: debugging tooling (local Playwright, file-backed) ----
 export {
   extractDomainCache,
   injectDomainCache,
+  injectLocalStorage,
   loadDomainCache,
   saveDomainCache,
   isSafeCookie,
   extractDomain,
+  getCacheDir,
 } from "./cache.js";
+
+// ---- Domain cache: ideal tooling (Browserbase Contexts; stubbed until wired) ----
+export {
+  loadContextId,
+  saveContextId,
+  loadContextMap,
+  buildContextSetting,
+  createRemoteContext,
+  resolveContextId,
+} from "./browserbase-cache.js";
+export type { ContextSetting } from "./browserbase-cache.js";
 
 // ---- Card fills ----
 export {

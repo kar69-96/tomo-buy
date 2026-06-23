@@ -17,6 +17,19 @@ describe("buildSessionRequest", () => {
     expect(body.proxies).toBe(false);
     expect((body.browserSettings as { advancedStealth: boolean }).advancedStealth).toBe(false);
   });
+
+  it("omits the context block when no contextId is given (fresh profile)", () => {
+    const body = buildSessionRequest("proj_123");
+    expect((body.browserSettings as Record<string, unknown>).context).toBeUndefined();
+  });
+
+  it("attaches a persistent per-domain Context when a contextId is given", () => {
+    const body = buildSessionRequest("proj_123", undefined, "ctx_abc");
+    expect((body.browserSettings as Record<string, unknown>).context).toEqual({
+      id: "ctx_abc",
+      persist: true,
+    });
+  });
 });
 
 describe("replayUrlFor", () => {

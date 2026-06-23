@@ -18,6 +18,13 @@ export interface SessionOptions {
   stealth?: boolean;
   /** Route through residential proxies (Browserbase runtime; no-op locally). */
   proxies?: boolean;
+  /**
+   * Target domain for this session. On the Browserbase (ideal) runtime this
+   * selects/creates a persistent per-domain Context so safe state is replayed
+   * server-side. Ignored by the local (debugging) runtime, which uses the file
+   * cache in cache.ts instead.
+   */
+  domain?: string;
   logSession?: boolean;
 }
 

@@ -518,8 +518,10 @@ export async function runCheckout(
     }
   }
 
-  // 4. Create local Playwright session (Chrome)
-  const session = await createSession(input.sessionOptions);
+  // 4. Create the browser session. `domain` lets the Browserbase (ideal) runtime
+  // attach a persistent per-domain Context; the local (debugging) runtime ignores
+  // it and uses the file cache below.
+  const session = await createSession({ ...input.sessionOptions, domain });
   const startMs = Date.now();
 
   // 4b. Optional deep tracer (JSONL + screenshots) — no-op unless CHECKOUT_TRACE_DIR set.

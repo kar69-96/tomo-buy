@@ -18,6 +18,7 @@ import {
   getBrowserbaseProjectId,
 } from "@tomo/core";
 import type { BrowserSession, SessionOptions } from "./session.js";
+import { resolveContextId, buildContextSetting } from "./browserbase-cache.js";
 
 const BROWSERBASE_API = "https://api.browserbase.com/v1";
 
@@ -34,15 +35,22 @@ interface CreateSessionResponse {
 export function buildSessionRequest(
   projectId: string,
   options?: SessionOptions,
+  contextId?: string | null,
 ): Record<string, unknown> {
+  const browserSettings: Record<string, unknown> = {
+    // Advanced stealth survives bot detection at scale (Scale-plan feature).
+    advancedStealth: options?.stealth ?? true,
+    viewport: { width: 1280, height: 900 },
+  };
+  // IDEAL-tooling per-domain cache: boot from a persistent Context (see
+  // browserbase-cache.ts) and save state back to it when the session ends.
+  if (contextId) {
+    browserSettings.context = buildContextSetting(contextId, true);
+  }
   return {
     projectId,
     proxies: options?.proxies ?? true,
-    browserSettings: {
-      // Advanced stealth survives bot detection at scale (Scale-plan feature).
-      advancedStealth: options?.stealth ?? true,
-      viewport: { width: 1280, height: 900 },
-    },
+    browserSettings,
   };
 }
 
@@ -55,6 +63,7 @@ async function createRemoteSession(
   apiKey: string,
   projectId: string,
   options?: SessionOptions,
+  contextId?: string | null,
 ): Promise<CreateSessionResponse> {
   const res = await fetch(`${BROWSERBASE_API}/sessions`, {
     method: "POST",
@@ -62,7 +71,7 @@ async function createRemoteSession(
       "Content-Type": "application/json",
       "X-BB-API-Key": apiKey,
     },
-    body: JSON.stringify(buildSessionRequest(projectId, options)),
+    body: JSON.stringify(buildSessionRequest(projectId, options, contextId)),
   });
   if (!res.ok) {
     const errBody = await res.text().catch(() => "");
@@ -90,7 +99,19 @@ export async function createBrowserbaseSession(
     );
   }
 
-  const { id, connectUrl } = await createRemoteSession(apiKey, projectId, options);
+  // IDEAL-tooling per-domain cache: reuse (or create) a persistent Context for
+  // this domain so safe state replays server-side. Best-effort — a null id just
+  // boots a fresh session. See browserbase-cache.ts.
+  const contextId = options?.domain
+    ? await resolveContextId(options.domain, apiKey, projectId)
+    : null;
+
+  const { id, connectUrl } = await createRemoteSession(
+    apiKey,
+    projectId,
+    options,
+    contextId,
+  );
 
   let browser: Browser;
   try {

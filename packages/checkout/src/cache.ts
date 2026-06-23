@@ -1,3 +1,15 @@
+// ---- Per-domain cache: DEBUGGING tooling (local Playwright) ----
+//
+// This is the file-backed cache used by the debugging browser runtime (local
+// Chrome via Playwright). After a successful checkout we extract the SAFE state
+// for a domain (non-auth cookies + localStorage) with the Playwright page API
+// and write it to ~/.tomo/cache/{domain}.json; on the next visit we re-inject it
+// so the agent skips re-login + re-discovery.
+//
+// The IDEAL tooling counterpart (Browserbase server-side Contexts) lives in
+// browserbase-cache.ts. Both honor the same isSafeCookie() filter so auth/session
+// tokens are never persisted.
+
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -49,7 +61,7 @@ export function extractDomain(url: string): string {
 
 // ---- Cache storage path ----
 
-function getCacheDir(): string {
+export function getCacheDir(): string {
   const dataDir =
     process.env.TOMO_DATA_DIR || path.join(os.homedir(), ".tomo");
   return path.join(dataDir, "cache");
