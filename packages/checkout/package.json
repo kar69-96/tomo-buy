@@ -1,0 +1,17 @@
+{
+  "name": "@bloon/checkout",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@bloon/core": "workspace:*",
+    "@bloon/crawling": "workspace:*",
+    "@browserbasehq/stagehand": "^3.0.0",
+    "agentmail": "^0.3.7",
+    "zod": "^3.22.0"
+  }
+}
