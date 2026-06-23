@@ -84,11 +84,14 @@ beforeEach(() => {
   setupConfig();
   vi.clearAllMocks();
   mockedIssueCard.mockResolvedValue(FAKE_CARD);
+  // Control funding mode explicitly so the suite is independent of .env.
+  process.env.FUNDING = "agentcard";
 });
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   delete process.env.BLOON_DATA_DIR;
+  delete process.env.FUNDING;
 });
 
 // ---- Tests ----
@@ -116,6 +119,26 @@ describe("confirm", () => {
     expect(mockedIssueCard).toHaveBeenCalledOnce();
     expect(mockedRunCheckout).toHaveBeenCalledWith(
       expect.objectContaining({ card: FAKE_CARD.card }),
+    );
+  });
+
+  it("FUNDING=static does not issue an Agentcard", async () => {
+    process.env.FUNDING = "static";
+    const order = makeOrder();
+    seedOrder(order);
+
+    mockedRunCheckout.mockResolvedValue({
+      success: true,
+      orderNumber: "ORD-STATIC",
+      sessionId: "sess_static",
+      replayUrl: "",
+    });
+
+    await confirm({ order_id: "bloon_ord_test01" });
+
+    expect(mockedIssueCard).not.toHaveBeenCalled();
+    expect(mockedRunCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({ card: undefined }),
     );
   });
 
