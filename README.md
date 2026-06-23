@@ -16,11 +16,11 @@ The planner composes three capabilities — `discover` → `login` → `purchase
 
 ## Core features
 
-**1. Email OTP, end to end.** Agent identities get disposable [AgentMail](https://agentmail.to) inboxes; the login executor polls for the verification email, extracts the code, and fills it — no human in the loop. The user's own account is handled the same way by reading OTP from the connected inbox.
+**1. Email OTP, end to end.** Agent identities get disposable [AgentMail](https://agentmail.to) inboxes; the login executor polls for the verification email, extracts the code, and fills it. The user's own account is handled the same way by reading OTP from the connected inbox.
 
 **2. Per-domain caching.** After a successful checkout, safe cookies + localStorage are saved per domain (`~/.tomo/cache/{domain}.json`) and replayed on the next visit, so the agent skips re-login and re-discovery. Auth/session cookies are filtered out by name — they never touch the cache.
 
-**3. Single-use virtual cards.** Every purchase mints a fresh [Agentcard](https://agentcard.to) virtual card, sized to the order total (+ a tax/shipping buffer) and hard-capped at a ceiling you set. Real money, minimal exposure — the card is dead after one use, and its PAN/CVV are injected straight into the page via Playwright CDP, never through the model or any log.
+**3. Single-use virtual cards.** Every purchase mints a fresh [Agentcard](https://agentcard.to) virtual card, sized to the order total (+ a tax/shipping buffer) and hard-capped at a ceiling you set. The PAN/CVV are injected straight into the page via Playwright CDP, never through the model or any log.
 
 ## Setup
 
@@ -33,9 +33,9 @@ The planner composes three capabilities — `discover` → `login` → `purchase
 | In-checkout browser agent | **Gemini** | Fast, cheap action-selection on the page loop. |
 | Funding | **[Agentcard](https://agentcard.to)** | Single-use virtual cards, minted per purchase and capped at your ceiling. |
 | Agent email + OTP | **[AgentMail](https://agentmail.to)** | Disposable inboxes per agent identity for signup and OTP. |
-| Your connected email | **[Composio](https://composio.dev)** | Read OTP and detect existing accounts on the user's own inbox. |
+| Connected email | **[Composio](https://composio.dev)** | Read OTP and detect existing accounts on the user's own inbox. |
 
-> The repo currently ships with sensible local defaults — **OpenRouter** models + **local Playwright Chrome** — so it runs out of the box. The stack above is what we'd reach for in production.
+> The repo currently has cheaper local defaults: **OpenRouter** models + **local Playwright Chrome**, so it runs out of the box. The stack above is tested to perform far better. 
 
 ### Install & run
 
