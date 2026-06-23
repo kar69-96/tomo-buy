@@ -1,123 +1,133 @@
-# Tomo-buy — Handoff (agentbuy core, Agentcard-funded)
+# Handoff — Tomo-buy headless checkout flow
 
-The backend was **replaced wholesale** with a fork of `kar69-96/agentbuy` ("Tomo") and rewired to
-this project's constraints. The old Tomo-buy backend (Temporal/intent-router/vaults) is archived
-under `_tomo-archive/`.
+_Last updated: 2026-06-23. Picks up from a session that verified the flow end-to-end, wired
+AgentMail, upgraded logging/traces, and fixed a batch of real checkout bugs._
 
-Branch: **`feat/agentbuy-agentcard`** (off `main`). Local:
-`/Users/karthikreddy/Downloads/GitHub/Demos/Tomo-buy`.
+## The goal (user's intent)
 
----
+The flow should be: **user intent → orchestrator plans the best approach (incl. login/signup
+method: agent identity vs. existing-email OTP via Composio) → headless subagent executes the task
+with a computer-use model (vision + DOM).**
 
-## 1. What it is now
+## Architecture verdict (verified)
 
-A REST API that purchases a product from a URL (or NL search), driving a **local Chrome (Playwright)**
-to complete checkout, paying with a **single-use virtual card issued per purchase by Agentcard**.
+The described architecture exists and is ~70% wired:
+- **Intent in** ✅ `POST /api/run { task }` → `startRun()` (`packages/api/src/routes/run.ts`, `packages/planner/src/run.ts`).
+- **Plan + login method** ⚠️ Planning lives in `packages/planner/` (NOT `orchestrator/`). `plan()` =
+  `planSteps()` + `buildBrief()`; login choice via `resolveStrategy()` (`identity/src/resolver.ts`)
+  picking `agent` / `connected_otp` / `connected_session` / `guest`. **Composio is still a stub**
+  (`identity/src/composio.ts`) → today everything defaults to a fresh agent identity; the `connected_otp`
+  branch can't fire. (COMPOSIO_API_KEY is set in .env but the real client isn't wired in.)
+- **Headless subagent** ⚠️ Real vision+DOM iterative loop (`checkout/src/act.ts`) on `gpt-4o-mini`
+  (not a true computer-use model). Works, with the fixes below.
 
-| Concern | Implementation |
+User directives still open:
+1. **Unify under "orchestrator"** — fold `@tomo/planner` into `@tomo/orchestrator` so it both plans and
+   exposes query/buy/confirm. (NOT started — this is Phase B. Plan file:
+   `~/.claude/plans/i-want-you-to-misty-candle.md`.)
+2. Composio OTP, true computer-use model, tighter planner→subagent prompt = explicitly deferred.
+
+## What got DONE this session (in the working tree, NOT yet git-committed)
+
+### New capability
+- **AgentMail provisioned + wired.** Their signup endpoint is public, no dashboard needed:
+  `POST https://api.agentmail.to/v0/agent/sign-up { human_email, username }` → `{ api_key, inbox_id }`.
+  Provisioned inbox **tomobuy@agentmail.to**, key written to `.env` as `AGENTMAIL_API_KEY` (gitignored).
+  Free tier: 3 inboxes / 3k emails/mo. SDK verified connecting.
+
+### Bug fixes (with unit tests; full suite 464 passed / 28 skipped, build clean)
+1. **LLM request had NO timeout** (`checkout/src/llm.ts`) — a hung OpenRouter fetch stalled the WHOLE
+   run for 5 min (this was the new-account "Target page closed" failure). Added `AbortController`,
+   default 60s, override via `LLM_TIMEOUT_MS` env or `timeoutMs` option. Test: `tests/llm-timeout.test.ts`.
+2. **Headless bot-block** (`checkout/src/session.ts`) — added `--disable-blink-features=AutomationControlled`,
+   strip `navigator.webdriver` via init script, fixed the UA (was hardcoded Chrome/120 which mismatches
+   real Chrome's sec-ch-ua; now only override headless to drop the `HeadlessChrome` tell).
+   ⚠️ Helps but does NOT defeat a COLD visit to a hardened Shopify site (see Gotchas).
+3. **Over-purchase — root cause = cart cookie persistence** (`checkout/src/cache.ts`) — the per-domain
+   cache replayed the Shopify `cart` cookie across runs, so each run kept adding to the SAME cart
+   (totals climbed $30→$47→$59, same checkout token). Added `cart`/`checkout`/`basket` to
+   `UNSAFE_COOKIE_PATTERNS` (applies to cookies AND localStorage). Test updated in `tests/cache.test.ts`.
+4. **Over-purchase — within-run** (`checkout/src/task.ts`) — added `QTY_GUIDANCE` to product
+   instructions: buy exactly 1 unit, never a multi-pack/bundle/subscription/"most popular".
+5. **Stale agent identity** (`identity/src/agent-identity.ts`) — an identity created before AgentMail
+   has a `@tomo.local` placeholder email that can't receive OTP. Now self-heals: if a placeholder
+   identity is loaded and AgentMail is configured, it upgrades to a real inbox in place. Test:
+   `identity/tests/agent-identity.test.ts`.
+   NOTE: `~/.tomo/identities.json` currently still holds the old `tomo_id_21qzh9` w/ `.local` email — the
+   self-heal fixes it on the next agent run, OR delete that file to force a clean re-provision.
+
+### Logging / traces upgraded (the user explicitly asked for this)
+- **`run.log`** — new `checkout/src/log.ts` tees `console.{log,info,warn,error}` to `<traceDir>/run.log`
+  with `[+Ns]` elapsed prefixes. Installed in `task.ts` after session create, stopped in `finally`.
+- **`summary.json`** — end-of-run rollup (status, durationMs, pages, llmCalls, strategy, observedTotal,
+  finalUrl/PageType/step) via `CheckoutTracer.writeSummary()` in `trace.ts`.
+- **per-record `durationMs` + `details`** added to `TraceRecord`.
+- Tests: `tests/log.test.ts`, `tests/trace.test.ts` (+summary). These logs IMMEDIATELY paid off —
+  elapsed timestamps exposed the 196s LLM hang and the cart-accumulation.
+
+### A reverted misstep (don't reintroduce)
+- Tried capping product-page LLM fallback to `maxSteps:4` — it BROKE add-to-cart (the product page
+  genuinely needs ~9 rounds to dismiss popups, select a variant, scroll the button into view).
+  Reverted to default. The latency was the hung LLM call (#1), not the round count.
+
+## Validation state (live e2e, no-spend `DRY_RUN_NO_SPEND=1`)
+
+| Scenario | Result |
 |---|---|
-| API | Hono REST: `POST /api/query` → `/api/buy` → `/api/confirm` (`packages/api`) |
-| LLM | **OpenRouter** (`packages/checkout/src/llm.ts`, `packages/crawling/src/llm.ts`) |
-| Browser | **Local Playwright Chrome** (`packages/checkout/src/session.ts`; `HEADLESS=false` to watch) |
-| Discovery | **Exa + Playwright + OpenRouter** (`packages/crawling`, `packages/checkout/src/discover.ts`) |
-| Funding | **Agentcard CLI** (`packages/checkout/src/agentcard.ts`); injected via CDP in `confirm()` |
+| Build + 464 unit tests | ✅ green |
+| guest-shop **headful, warm cache** | ✅ reached PARKED-payment, no spend |
+| guest-shop **headless, warm cache** (clearance cookies cached) | ✅ reached PARKED-payment (stealth fix worked) |
+| guest-shop **COLD cache** (headless or headful) | ⚠️ blank/blocked or `page.goto` timeout — primalkitchen cold-visit bot defense |
+| new-agent-account | ⚠️ create_account + purchase_confirm gates fire ✅, no spend ✅; hung pre-timeout-fix — needs a re-run to confirm the fix unblocks it |
+| booking-loop / frontier | not run this session |
 
-**Prime directive preserved:** card PAN/CVV/expiry flow only into CDP injection (`fill.ts`), never to
-the LLM or logs. Only the opaque card id is logged.
+**Still unproven end-to-end:** that the cart-cookie + QTY fixes drop the observed total to a SINGLE
+unit. The decisive clean headful run hit a transient `page.goto` 30s network timeout. **Re-run it first
+next session.**
 
----
-
-## 2. Status (TL;DR)
-
-- **Build green; 329 unit tests pass** (13 network e2e skipped). `pnpm build && pnpm test`.
-- Server **boots and the API responds** (validated `MISSING_FIELD`/`INVALID_URL`).
-- **NOT yet run end-to-end against a real merchant** — that needs the human Agentcard setup + keys
-  below, and is a **real purchase with real money**.
-- Committed on `feat/agentbuy-agentcard` (2 commits: scaffold + integration). Not merged, no PR.
-
----
-
-## 3. What YOU must do before a real run (human-only)
-
-1. **Agentcard (one-time):**
-   ```bash
-   npx agentcard@latest signup --email you@example.com   # click the magic link
-   npx agentcard@latest setup                            # name, phone, Stripe payment method
-   npx agentcard@latest limit --amount 250               # cover your spend
-   npx agentcard@latest whoami                           # confirm logged in
-   ```
-   (The agent cannot do this — it needs a browser + Stripe.) Preflight in `agentcard.ts` will block
-   with a clear message if not logged in.
-2. **`.env`** — currently has only `OPENROUTER_API_KEY`. Add:
-   - `EXA_API_KEY=...` (for NL search; URL mode works without it)
-   - Shipping defaults: `SHIPPING_NAME/STREET/CITY/STATE/ZIP/COUNTRY/EMAIL/PHONE`
-   - Optionally `BILLING_*`, `AGENT_MODEL`, `HEADLESS=false`, `PORT=3010` (3000 is taken on this box)
-   See `.env.example` for the full list.
-
----
-
-## 4. How to run
+## How to run / verify
 
 ```bash
-pnpm install && pnpm build
-
-# Terminal 1: API server (PORT=3010 because 3000 is occupied here)
-PORT=3010 HEADLESS=false node --env-file=.env packages/api/dist/index.js
-# (or: pnpm start  — defaults to PORT 3000)
-
-# Terminal 2: drive it (query -> buy -> confirm)
-curl -s -X POST localhost:3010/api/query  -H 'content-type: application/json' -d '{"url":"<product-url>"}'
-curl -s -X POST localhost:3010/api/buy    -H 'content-type: application/json' \
-  -d '{"url":"<product-url>","shipping":{"name":"...","street":"...","city":"...","state":"..","zip":"..","country":"US","email":"..","phone":".."}}'
-# -> returns order_id and a quote. Nothing spent yet.
-curl -s -X POST localhost:3010/api/confirm -H 'content-type: application/json' -d '{"order_id":"tomo_ord_..."}'
-# -> issues a single-use Agentcard, drives Chrome to checkout, REAL purchase, returns a receipt.
+pnpm install && pnpm build && pnpm test          # all green
+# One live no-spend scenario (headful renders most reliably):
+rm -f ~/.tomo/cache/primalkitchen.com.json       # start with a clean cart
+HEADLESS=false E2E_LIVE=1 LLM_TIMEOUT_MS=45000 \
+  pnpm vitest run e2e/scenarios/guest-shop.e2e.test.ts
+# Then read the trace:
+TD=$(ls -dt traces/guest-shop-* | head -1); cat "$TD/summary.json"; cat "$TD/run.log"
 ```
+Expectation if cart/qty fixes hold: `observedTotal` ≈ ONE Dijon Mustard ($5.49) + shipping/tax
+(~$14), NOT $30–59.
 
-Funding knobs (`.env`): `FUNDING=agentcard|static`, `AGENTCARD_BUFFER_PCT` (default 0.15),
-`AGENTCARD_MAX_AMOUNT` (default 500), `AGENTCARD_BIN` (path to a global agentcard, else uses npx).
+## Gotchas (read before debugging)
+- **Cold headless on hardened sites is blocked.** primalkitchen (Shopify) serves a blank page to a
+  no-cache headless (and sometimes headful) visit. Once a headful/warm run caches the bot-clearance
+  cookies (e.g. `cf_clearance`), subsequent headless runs work. Production fix =
+  `BROWSER_RUNTIME=browserbase` (stealth cloud) per the .env/README. Our `cart` filter intentionally
+  does NOT drop clearance cookies, so warm-up still works.
+- **Always clear `~/.tomo/cache/primalkitchen.com.json` between cart tests** or you'll see stale
+  accumulation from a pre-fix cache (those still contain a `cart` cookie).
+- **e2e imports BUILT dist** (`pnpm build` first). The `@tomo/planner` alias is in `vitest.config.ts`
+  — update it when Phase B removes the planner package.
+- `.env` is loaded by `vitest.config.ts` (not auto). Keys present: OPENROUTER, AGENT_MODEL, EXA,
+  VAULT_KEY, COMPOSIO, AGENTMAIL. AGENTMAIL is the one added this session.
 
----
+## Suggested next steps (priority order)
+1. Re-run guest-shop (clean cache, headful) to CONFIRM `observedTotal` = 1 unit. If still high, open the
+   parked screenshot `002-PARKED-payment.png` and check the line-item quantity (qty selector vs double-add).
+2. Re-run new-agent-account to confirm the LLM-timeout fix unblocks the hang + the identity self-heals.
+3. **Phase B: unify planner under @tomo/orchestrator** (plan file above). Move
+   `planner/src/{plan,brief,run,capabilities}.ts` → `orchestrator/src/planning/`, re-export from the
+   barrel, repoint `api/src/routes/run.ts` + `vitest.config.ts`, delete `@tomo/planner`.
+4. Wire the real Composio client so `connected_otp` works (currently stubbed).
 
-## 5. Package map
+## Changed files
+- M `packages/checkout/src/{cache,llm,session,task,trace}.ts`
+- A `packages/checkout/src/log.ts`
+- M `packages/checkout/tests/{cache,trace}.test.ts`
+- A `packages/checkout/tests/{llm-timeout,log}.test.ts`
+- M `packages/identity/src/agent-identity.ts`
+- A `packages/identity/tests/agent-identity.test.ts`
+- `.env` (AGENTMAIL_API_KEY added — gitignored)
 
-```
-packages/
-  core/         types, fees, JSON store (~/.tomo), config (FUNDING + Agentcard knobs), errors
-  crawling/     discovery: Exa search + Playwright fetch + OpenRouter extraction (Firecrawl/Gemini removed)
-  checkout/     session.ts (Playwright), task.ts (checkout loop), act.ts (OpenRouter act),
-                fill.ts/agent-tools.ts (CDP card fill), agentcard.ts (funding), credentials.ts
-  checkout-http/ HTTP checkout engine (deferred; browser path is the v1 path)
-  orchestrator/ query()/buy()/confirm(); confirm() issues the Agentcard and injects it
-  api/          Hono server (src/index.ts boots it)
-_tomo-archive/  the original Tomo-buy backend + plans (reference only)
-```
-
----
-
-## 6. Known gaps / caveats (honest)
-
-- **Real money:** every successful `/api/confirm` issues a real card and completes a real purchase.
-- **Card under-funding → decline:** the card is sized to item price + buffer (default 15%) for
-  tax/shipping, capped at `AGENTCARD_MAX_AMOUNT`. If a merchant's tax/shipping exceeds the buffer the
-  charge can decline — raise `AGENTCARD_BUFFER_PCT`.
-- **CLI parsing:** `agentcard` has no `--json`; `agentcard.ts` parses human-readable stdout with
-  defensive regexes (unit-tested). If the CLI output format changes, parsing may break.
-- **Browser checkout is brittle** on protected/anti-bot merchants (Amazon/Walmart → captcha/login).
-  Simple/Shopify-style stores are realistic.
-- **Per-variant pricing degraded:** `fetchVariantPriceBrowser`/`resolveVariantPricesViaBrowser` are
-  no-ops (return base price for all variants) — the Stagehand swatch-clicker wasn't reimplemented.
-- **3DS/OTP:** `agentcard 3ds` reading is wired in `agentcard.ts` (`read3dsCodes`) but not yet hooked
-  into the checkout step-up flow (the loop still uses the AgentMail path if `AGENTMAIL_API_KEY` set).
-- **checkout-http** engine is bypassed by default (uses static creds); browser path carries Agentcard.
-
----
-
-## 7. Suggested next steps
-
-- Do the Agentcard + `.env` setup (§3), then a **small real purchase on a simple store** to validate
-  end-to-end; watch with `HEADLESS=false`.
-- Hook `read3dsCodes()` into the checkout step-up page (replace/augment the AgentMail path in task.ts).
-- Reinstate per-variant price resolution via the local Playwright agent if needed.
-- Decide whether to keep `checkout-http` or delete it.
-- Open a PR / merge `feat/agentbuy-agentcard` when satisfied.
+Nothing has been git-committed yet.

@@ -26,7 +26,7 @@ describe("isSafeCookie", () => {
   it("returns true for safe cookie names", () => {
     expect(isSafeCookie("consent_cookie")).toBe(true);
     expect(isSafeCookie("language")).toBe(true);
-    expect(isSafeCookie("cart_id")).toBe(true);
+    expect(isSafeCookie("localization")).toBe(true);
     expect(isSafeCookie("_ga")).toBe(true);
   });
 
@@ -38,6 +38,14 @@ describe("isSafeCookie", () => {
     expect(isSafeCookie("login_state")).toBe(false);
     expect(isSafeCookie("jwt_access")).toBe(false);
     expect(isSafeCookie("user_sid")).toBe(false);
+  });
+
+  it("excludes transactional cart/checkout cookies (no cross-run accumulation)", () => {
+    expect(isSafeCookie("cart")).toBe(false);
+    expect(isSafeCookie("cart_id")).toBe(false);
+    expect(isSafeCookie("cart_currency")).toBe(false);
+    expect(isSafeCookie("checkout")).toBe(false);
+    expect(isSafeCookie("basket")).toBe(false);
   });
 });
 

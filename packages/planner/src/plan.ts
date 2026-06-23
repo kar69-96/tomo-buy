@@ -109,6 +109,57 @@ function flatStringSelections(obj: Record<string, unknown> | undefined): Record<
 }
 
 /**
+ * Keys that identify WHICH product (pinned already by the entry URL), not WHICH
+ * variant to pick on the page. A brief sometimes lists these in `parameters`
+ * (e.g. {"product_name":"Dijon Mustard"}); fed to checkout as a "selection" they
+ * become a nonsense instruction ("Select exactly these options: product_name:
+ * Dijon Mustard") with no matching page control, burning LLM rounds until the
+ * product page stalls out. Genuine variant keys (size, color, scent, plan, …)
+ * are NOT here and pass through. Site-agnostic — matched on the normalized key.
+ */
+const NON_VARIANT_KEYS = new Set([
+  "product",
+  "productname",
+  "producttitle",
+  "producturl",
+  "item",
+  "itemname",
+  "name",
+  "title",
+  "sku",
+  "id",
+  "productid",
+  "url",
+  "link",
+  "brand",
+  "store",
+  "site",
+  "merchant",
+  "vendor",
+]);
+
+/** Normalize a key for denylist matching: lowercase, strip non-alphanumerics. */
+function normalizeKey(k: string): string {
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Selections the checkout page handler can act on: flat strings with the
+ * product-identity keys removed (those describe the product, not a variant).
+ */
+function toCheckoutSelections(
+  obj: Record<string, unknown> | undefined,
+): Record<string, string> {
+  const flat = flatStringSelections(obj);
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(flat)) {
+    if (NON_VARIANT_KEYS.has(normalizeKey(k))) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
  * Reconcile the LLM/fallback steps against the grounded brief. The LLM plan is
  * unreliable — it sometimes drops the purchase step or emits nested, non-string
  * selections that the checkout layer rejects. The brief, by contrast, is grounded
@@ -118,14 +169,14 @@ function flatStringSelections(obj: Record<string, unknown> | undefined): Record<
  *   3. Drive purchase selections from brief.parameters (always flat strings),
  *      merged over any flat selections the LLM produced.
  */
-function reconcileSteps(
+export function reconcileSteps(
   rawSteps: PlanStep[],
   brief: ExecutionBrief | undefined,
   task: string,
 ): PlanStep[] {
   const entryUrl = brief?.target?.url?.trim() || extractUrl(task) || undefined;
   const domain = brief?.target?.domain?.trim() || (entryUrl ? safeDomain(entryUrl) : undefined);
-  const briefParams = flatStringSelections(brief?.parameters);
+  const briefParams = toCheckoutSelections(brief?.parameters);
 
   const steps: PlanStep[] = rawSteps.map((s) => {
     const args = { ...s.args };
@@ -133,7 +184,7 @@ function reconcileSteps(
       args.url = entryUrl;
     }
     if (s.capability === "purchase") {
-      const merged = { ...flatStringSelections(args.selections as Record<string, unknown>), ...briefParams };
+      const merged = { ...toCheckoutSelections(args.selections as Record<string, unknown>), ...briefParams };
       if (Object.keys(merged).length > 0) args.selections = merged;
       else delete args.selections;
       return { ...s, args, gate: "purchase_confirm" as const };

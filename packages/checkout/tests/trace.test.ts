@@ -69,6 +69,43 @@ describe("CheckoutTracer", () => {
     expect(lines[0].step).toBe("navigate"); // default from the wrapped StepTracker
     expect(lines[1].pageType).toBe("payment-form");
     expect(lines[1].outcome).toBe("pass");
+    // Every record now carries a per-step duration.
+    expect(typeof lines[0].durationMs).toBe("number");
+  });
+
+  it("writes a summary.json rollup over the run", async () => {
+    const tracer = new CheckoutTracer(dir, "sess_sum");
+
+    tracer.record({
+      pageIndex: 0,
+      url: "https://shop.example/p/1",
+      pageType: "product",
+      action: "scripted:add-to-cart",
+      mode: "scripted",
+      llmCalls: 1,
+    });
+    tracer.record({
+      pageIndex: 1,
+      url: "https://shop.example/checkout",
+      pageType: "payment-form",
+      action: "parked-before-place-order",
+      mode: "navigate",
+      llmCalls: 2,
+      details: { observed_total: "30.90" },
+      outcome: "pass",
+    });
+
+    const summary = tracer.writeSummary({ outcome: "pass" });
+    expect(summary.records).toBe(2);
+    expect(summary.pages).toBe(2); // highest pageIndex (1) + 1
+    expect(summary.llmCalls).toBe(2);
+    expect(summary.observedTotal).toBe("30.90");
+    expect(summary.finalPageType).toBe("payment-form");
+
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf-8"));
+    expect(onDisk.sessionId).toBe("sess_sum");
+    expect(onDisk.observedTotal).toBe("30.90");
+    expect(onDisk.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it("makeTracerFromEnv returns undefined when CHECKOUT_TRACE_DIR is unset", () => {

@@ -69,6 +69,17 @@ export interface CompleteOptions {
    * MUST already be redacted — no card/PII pixels (redact.ts enforces this).
    */
   images?: string[];
+  /** Abort the request after this many ms. Overrides LLM_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
+/** Default per-request LLM timeout. A hung request must never stall a whole run. */
+const DEFAULT_LLM_TIMEOUT_MS = 60_000;
+
+function resolveTimeoutMs(options: CompleteOptions): number {
+  if (typeof options.timeoutMs === "number" && options.timeoutMs > 0) return options.timeoutMs;
+  const env = Number(process.env.LLM_TIMEOUT_MS);
+  return Number.isFinite(env) && env > 0 ? env : DEFAULT_LLM_TIMEOUT_MS;
 }
 
 /**
@@ -95,16 +106,32 @@ export async function complete(
   if (options.maxTokens) body.max_tokens = options.maxTokens;
   if (options.json) body.response_format = { type: "json_object" };
 
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://github.com/kar69-96/agentbuy",
-      "X-Title": "tomo-buy",
-    },
-    body: JSON.stringify(body),
-  });
+  // Bound every request so a hung connection can't stall the whole checkout loop.
+  const timeoutMs = resolveTimeoutMs(options);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://github.com/kar69-96/agentbuy",
+        "X-Title": "tomo-buy",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`OpenRouter request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!res.ok) {
     const errBody = await res.text().catch(() => "");

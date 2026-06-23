@@ -61,20 +61,44 @@ export async function createSession(
 
   const headless = resolveHeadless(options);
 
+  // Minimal, generic anti-automation hardening. Many storefronts (esp. Shopify)
+  // serve a blank page to obviously-automated Chrome. These are the standard,
+  // site-agnostic mitigations — they reduce trivial detection but do NOT defeat
+  // advanced bot defenses (use BROWSER_RUNTIME=browserbase or HEADLESS=false for
+  // those). `--disable-blink-features=AutomationControlled` drops the headless
+  // `navigator.webdriver` flag the most basic checks read.
+  const launchArgs = ["--disable-blink-features=AutomationControlled"];
+
   let browser: Browser;
   try {
-    browser = await chromium.launch({ channel: "chrome", headless });
+    browser = await chromium.launch({ channel: "chrome", headless, args: launchArgs });
   } catch {
     // System Chrome unavailable — fall back to bundled Chromium.
-    browser = await chromium.launch({ headless });
+    browser = await chromium.launch({ headless, args: launchArgs });
   }
 
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    // Only override the UA when headless: real Chrome's headless UA contains
+    // "HeadlessChrome" (an obvious tell), so we strip it. When headful we leave
+    // the native UA untouched so it stays consistent with the sec-ch-ua client
+    // hints Chrome sends (a hand-set UA that disagrees with those is itself a
+    // tell). The version here tracks a recent stable Chrome.
+    ...(headless
+      ? {
+          userAgent:
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        }
+      : {}),
   });
+
+  // Belt-and-suspenders: ensure navigator.webdriver is undefined on every page
+  // (covers the bundled-Chromium fallback, which ignores the launch arg above).
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+  });
+
   const page = await context.newPage();
 
   // Auto-accept JS dialogs (e.g. an "added to cart" alert) so steps don't block.

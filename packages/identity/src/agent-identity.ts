@@ -10,6 +10,7 @@ import {
   getIdentities,
   getIdentity,
   createIdentity,
+  updateIdentity,
   getSiteAccount,
   createSiteAccount,
 } from "@tomo/core";
@@ -21,15 +22,39 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** A `@tomo.local` address is the offline placeholder used when AgentMail is unset. */
+function isPlaceholderEmail(email: string): boolean {
+  return email.endsWith("@tomo.local");
+}
+
 /**
  * Return the default agent identity, creating one (with an AgentMail inbox) on
  * first use. A single shared persona is sufficient for v1.
+ *
+ * Self-healing: an identity created before AgentMail was configured carries a
+ * `@tomo.local` placeholder email that can never receive a verification/OTP
+ * message. If AgentMail is now available, upgrade that identity to a real inbox
+ * in place (preserving its id + site accounts) so registration can complete.
  */
 export async function getOrCreateAgentIdentity(
   label = "default",
 ): Promise<AgentIdentity> {
   const existing = getIdentities().find((i) => i.label === label);
-  if (existing) return existing;
+  if (existing) {
+    if (isPlaceholderEmail(existing.email) && process.env.AGENTMAIL_API_KEY) {
+      const inbox = await provisionInbox(existing.identity_id);
+      if (!isPlaceholderEmail(inbox.email)) {
+        const ts = nowIso();
+        await updateIdentity(existing.identity_id, {
+          email: inbox.email,
+          inbox_id: inbox.inboxId ?? undefined,
+          updated_at: ts,
+        });
+        return { ...existing, email: inbox.email, inbox_id: inbox.inboxId ?? undefined, updated_at: ts };
+      }
+    }
+    return existing;
+  }
 
   const identityId = generateId("id");
   const inbox = await provisionInbox(identityId);

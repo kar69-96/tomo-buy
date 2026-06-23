@@ -39,6 +39,8 @@ import { executeLogin, seedSessionCookies } from "./login.js";
 import type { LoginPlan } from "./login.js";
 import { makeTracerFromEnv } from "./trace.js";
 import type { TraceMode } from "./trace.js";
+import { teeConsoleToFile } from "./log.js";
+import type { ConsoleTee } from "./log.js";
 import { SkillRecorder } from "./skill-recorder.js";
 import {
   loadSiteSkill,
@@ -459,6 +461,14 @@ function pageTypeToStep(pageType: PageType): CheckoutStep {
 
 // ---- Build contextual LLM fallback instruction ----
 
+// Generic (site-agnostic) guardrail against over-buying. Product pages often
+// default to or highlight a multi-unit/bundle/subscription option (e.g. "2 Units
+// — MOST POPULAR"), which the agent can mistake for the required variant. The
+// task is to buy ONE unit, so the card is sized to a single item; picking a
+// multi-pack inflates the total past the approved ceiling and declines.
+const QTY_GUIDANCE =
+  'Buy exactly ONE unit: keep the quantity at 1 and choose the single-unit ("1 unit") option. Do NOT select any multi-unit, multi-pack, bundle, or subscription/"subscribe & save" option, and do NOT increase the quantity stepper — even if another option is marked "most popular" or "best value".';
+
 function buildPageInstruction(
   pageType: PageType,
   input: CheckoutInput,
@@ -518,15 +528,15 @@ function buildPageInstruction(
       if (selections && Object.keys(selections).length > 0) {
         if (state.selectionsApplied) {
           // Selections applied — click Add to Cart
-          return `${ctx}${stallHint}Product options are already selected. Click the "Add to Cart", "Add to Bag", or "Buy Now" button NOW. Do NOT re-select any options.`;
+          return `${ctx}${stallHint}Product options are already selected. Click the "Add to Cart", "Add to Bag", or "Buy Now" button NOW. Do NOT re-select any options. ${QTY_GUIDANCE}`;
         }
         // First attempt: select options
-        return `${ctx}Select exactly these options: ${Object.entries(selections).map(([k, v]) => `${k}: ${v}`).join(", ")}. After selecting, click "Add to Cart" or "Add to Bag".`;
+        return `${ctx}Select exactly these options: ${Object.entries(selections).map(([k, v]) => `${k}: ${v}`).join(", ")}. After selecting, click "Add to Cart" or "Add to Bag". ${QTY_GUIDANCE}`;
       }
       // No pre-set selections — add to cart, but many products require a size/variant
       // before "Add to Cart" enables. Allow choosing the first in-stock option, while
       // discouraging unrelated browsing.
-      return `${ctx}${stallHint}Add this item to the cart. If the "Add to Cart"/"Add to Bag" button is disabled or does nothing when clicked, a required option is unselected — pick the first available/in-stock size or variant, then click "Add to Cart", "Add to Bag", or "Buy Now". Keep the current color; do not navigate to other products.`;
+      return `${ctx}${stallHint}Add this item to the cart. If the "Add to Cart"/"Add to Bag" button is disabled or does nothing when clicked, a required option is unselected — pick the first available/in-stock size or variant, then click "Add to Cart", "Add to Bag", or "Buy Now". Keep the current color; do not navigate to other products. ${QTY_GUIDANCE}`;
     }
 
     case "cart":
@@ -656,6 +666,11 @@ export async function runCheckout(
 
   // 4b. Optional deep tracer (JSONL + screenshots) — no-op unless CHECKOUT_TRACE_DIR set.
   const tracer = makeTracerFromEnv(session.id);
+  // Mirror this run's console output to <trace>/run.log with elapsed timestamps,
+  // so the full narrative is captured alongside the trace (not just on stdout).
+  const traceDir = process.env.CHECKOUT_TRACE_DIR;
+  const consoleTee: ConsoleTee | undefined =
+    tracer && traceDir ? teeConsoleToFile(traceDir, startMs) : undefined;
 
   // 4c. Per-site skill: always-on recorder + read-back hints from any prior success.
   const recorder = new SkillRecorder(domain);
@@ -751,10 +766,16 @@ export async function runCheckout(
       }
     }
 
-    // 8c. DOM pruning — strip non-functional elements to reduce token count
+    // 8c. DOM pruning — strip purely non-functional elements to reduce token count.
+    // CRITICAL: do NOT remove `[aria-hidden="true"]` elements. aria-hidden is a
+    // screen-reader semantic, not a visibility flag — sites routinely wrap VISIBLE,
+    // interactive content in it (a modal's backdropped page content, carousels, tab
+    // panels, off-screen menus). On a Shopify product page with a cookie-consent
+    // modal open, the entire product section (Add-to-Cart included) is aria-hidden;
+    // removing it deletes the real page, collapsing it to zero actionable controls
+    // and a blank screenshot — which looked like a bot-block but was self-inflicted.
     await page.evaluate(() => {
       document.querySelectorAll("noscript").forEach(e => e.remove());
-      document.querySelectorAll('[aria-hidden="true"]').forEach(e => e.remove());
       document.querySelectorAll("img").forEach(img => { img.removeAttribute("srcset"); });
     });
 
@@ -1337,6 +1358,7 @@ export async function runCheckout(
               llmCalls: state.llmCalls,
               screenshot: parkedShot,
               note: `observed_total=${total ?? "(not found)"}`,
+              details: { observed_total: total ?? undefined, parked_at: "payment" },
               outcome: "pass",
             });
             // Return early for dry run — don't place order
@@ -1620,7 +1642,11 @@ export async function runCheckout(
             iterative: true,
             // Form-flow pages (a multi-field search/booking form) need more in-page
             // rounds to fill several widgets (autocompletes, date picker, steppers)
-            // and then submit, before the outer loop re-detects the page.
+            // and then submit, before the outer loop re-detects the page. The product
+            // page genuinely needs its rounds too — dismissing popups, selecting a
+            // variant, and scrolling the Add-to-Cart button into view — so we keep
+            // the default. (Per-request LLM latency is bounded by the timeout in
+            // llm.ts, which was the real cause of the long product-page stalls.)
             maxSteps: briefDriven ? 10 : undefined,
             // Card data may be present on payment pages → aggressively redact
             // the screenshot (cover every input/iframe) so a CDP-filled PAN
@@ -1808,6 +1834,14 @@ export async function runCheckout(
       durationMs: Date.now() - startMs,
     };
   } finally {
+    // Roll up the run into summary.json, then stop mirroring console to run.log.
+    // Both are best-effort and must never mask a real checkout error.
+    try {
+      tracer?.writeSummary();
+    } catch {
+      /* best-effort */
+    }
+    consoleTee?.stop();
     // Close the local browser session
     await destroySession(session);
   }

@@ -31,9 +31,10 @@ interface CdpCookie {
   sameSite?: string;
 }
 
-// ---- Unsafe cookie patterns (never cache auth tokens) ----
+// ---- Unsafe cookie patterns (never cache auth or transactional state) ----
 
 const UNSAFE_COOKIE_PATTERNS: readonly string[] = [
+  // Auth/session — never replay someone else's credentials.
   "session",
   "token",
   "auth",
@@ -41,6 +42,13 @@ const UNSAFE_COOKIE_PATTERNS: readonly string[] = [
   "sid",
   "login",
   "jwt",
+  // Transactional cart/checkout state — replaying a stale cart into a NEW
+  // purchase accumulates items across runs (a single-item buy silently becomes
+  // a multi-item order that overshoots the funded amount). These are universal
+  // e-commerce cookie names, so the filter stays site-agnostic.
+  "cart",
+  "checkout",
+  "basket",
 ];
 
 export function isSafeCookie(cookieName: string): boolean {
@@ -122,12 +130,17 @@ export async function extractDomainCache(
     }
     return items;
   });
+  // Apply the same auth/cart exclusions to localStorage — some carts live here
+  // too, and replaying them would re-accumulate items on the next run.
+  const safeLocalStorage = Object.fromEntries(
+    Object.entries(localStorage).filter(([key]) => isSafeCookie(key)),
+  );
 
   return {
     domain,
     cookies: safeCookies,
     localStorage:
-      Object.keys(localStorage).length > 0 ? localStorage : undefined,
+      Object.keys(safeLocalStorage).length > 0 ? safeLocalStorage : undefined,
     updated_at: new Date().toISOString(),
   };
 }
