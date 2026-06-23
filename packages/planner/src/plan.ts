@@ -3,12 +3,15 @@
  * over the capability registry. Uses an LLM when configured, with a
  * deterministic fallback so the planner is robust offline and in tests.
  */
-import type { ExecutionPlan, PlanStep } from "@tomo/core";
+import type { ExecutionPlan, PlanStep, ExecutionBrief } from "@tomo/core";
 import { completeJson, getOpenRouterKey } from "@tomo/identity";
 import { describeCapabilities } from "./capabilities.js";
 import { buildBrief, fallbackBrief } from "./brief.js";
 
 const URL_RE = /\bhttps?:\/\/[^\s"'<>]+/i;
+
+/** Tasks that should always terminate in a purchase/booking checkout step. */
+const BUY_INTENT_RE = /\b(buy|book|booking|purchase|order|reserve|reservation|checkout|check\s*out|pay for)\b/i;
 
 export function extractUrl(task: string): string | null {
   const m = task.match(URL_RE);
@@ -23,8 +26,10 @@ Return STRICT JSON: {"steps": [{"capability": string, "args": object}]}
 
 Guidance:
 - For buying a specific product URL: [discover(url), login(domain), purchase(url)].
+- For booking/reserving anything that ends in payment (a reservation, ticket, appointment, registration, subscription): [login(domain), purchase(url)] — "purchase" covers any checkout that spends money, not just physical products.
 - For a natural-language shopping request with no URL: [discover(query)] only — a human picks the product before purchase.
 - Always insert a "login" step before "purchase" when the site may gate checkout.
+- purchase.selections MUST be a FLAT object of string keys to string values (e.g. {"date":"2026-07-15","quantity":"2","tier":"standard"}). Never nest objects or use non-string values.
 - Keep the plan minimal and efficient. Do not invent capabilities.`;
 
 interface RawPlan {
@@ -78,14 +83,79 @@ async function planSteps(task: string): Promise<ExecutionPlan> {
 
 /**
  * Plan a task: produce the ordered capability steps AND a high-detail execution
- * brief for the downstream execution agent. The two are computed in parallel.
+ * brief for the downstream execution agent. The two are computed in parallel,
+ * then reconciled so the steps that actually drive execution carry the brief's
+ * grounded entry URL and flat string selections.
  */
 export async function plan(task: string): Promise<ExecutionPlan> {
   const [base, brief] = await Promise.all([
     planSteps(task),
     buildBrief(task).catch(() => fallbackBrief(task)),
   ]);
-  return { ...base, brief };
+  const steps = reconcileSteps(base.steps, brief, task);
+  return { ...base, steps, brief };
+}
+
+/** Keep only flat string→non-empty-string entries (what checkout selections require). */
+function flatStringSelections(obj: Record<string, unknown> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!obj) return out;
+  for (const [k, v] of Object.entries(obj)) {
+    if (!k.trim()) continue;
+    if (typeof v === "string" && v.trim()) out[k] = v;
+    else if (typeof v === "number" || typeof v === "boolean") out[k] = String(v);
+  }
+  return out;
+}
+
+/**
+ * Reconcile the LLM/fallback steps against the grounded brief. The LLM plan is
+ * unreliable — it sometimes drops the purchase step or emits nested, non-string
+ * selections that the checkout layer rejects. The brief, by contrast, is grounded
+ * and always flat-stringly typed. So we:
+ *   1. Prefer the brief's grounded entry URL for discover/purchase steps.
+ *   2. Guarantee a purchase step for buy/booking intent (login before it).
+ *   3. Drive purchase selections from brief.parameters (always flat strings),
+ *      merged over any flat selections the LLM produced.
+ */
+function reconcileSteps(
+  rawSteps: PlanStep[],
+  brief: ExecutionBrief | undefined,
+  task: string,
+): PlanStep[] {
+  const entryUrl = brief?.target?.url?.trim() || extractUrl(task) || undefined;
+  const domain = brief?.target?.domain?.trim() || (entryUrl ? safeDomain(entryUrl) : undefined);
+  const briefParams = flatStringSelections(brief?.parameters);
+
+  const steps: PlanStep[] = rawSteps.map((s) => {
+    const args = { ...s.args };
+    if ((s.capability === "discover" || s.capability === "purchase") && entryUrl && !args.url) {
+      args.url = entryUrl;
+    }
+    if (s.capability === "purchase") {
+      const merged = { ...flatStringSelections(args.selections as Record<string, unknown>), ...briefParams };
+      if (Object.keys(merged).length > 0) args.selections = merged;
+      else delete args.selections;
+      return { ...s, args, gate: "purchase_confirm" as const };
+    }
+    return { ...s, args };
+  });
+
+  const wantsPurchase = BUY_INTENT_RE.test(task) || (brief?.objective ? BUY_INTENT_RE.test(brief.objective) : false);
+  const hasPurchase = steps.some((s) => s.capability === "purchase");
+
+  // A buy/booking task with a known target but no purchase step is the common
+  // LLM failure mode — synthesize the missing step from the grounded brief.
+  if (wantsPurchase && !hasPurchase && entryUrl) {
+    if (domain && !steps.some((s) => s.capability === "login")) {
+      steps.push({ capability: "login", args: { domain } });
+    }
+    const args: Record<string, unknown> = { url: entryUrl };
+    if (Object.keys(briefParams).length > 0) args.selections = briefParams;
+    steps.push({ capability: "purchase", args, gate: "purchase_confirm" });
+  }
+
+  return steps;
 }
 
 function normalizeStep(

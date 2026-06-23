@@ -204,3 +204,12 @@ export { scanIframesForCardFields } from "./agent-tools.js";
 // ---- Checkout tracing (JSONL + screenshots; opt-in via CHECKOUT_TRACE_DIR) ----
 export { CheckoutTracer, makeTracerFromEnv } from "./trace.js";
 export type { TraceRecord, TraceMode } from "./trace.js";
+
+// ---- Screenshot redaction (vision trust boundary) ----
+export {
+  captureRedactedScreenshot,
+  isCardFieldIdent,
+  isPaymentIframeSrc,
+  filterPiiValues,
+} from "./redact.js";
+export type { RedactOptions } from "./redact.js";

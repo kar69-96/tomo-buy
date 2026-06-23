@@ -38,6 +38,7 @@ export default defineConfig({
     ],
     fileParallelism: false,
     // E2E scenarios drive a real browser + real LLM and can take minutes.
-    testTimeout: process.env.E2E_LIVE === "1" ? 300_000 : 10_000,
+    testTimeout:
+      process.env.E2E_LIVE === "1" ? Number(process.env.E2E_TIMEOUT_MS ?? 900_000) : 10_000,
   },
 });

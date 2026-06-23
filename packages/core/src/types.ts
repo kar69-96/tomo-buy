@@ -281,11 +281,11 @@ export type BriefLoginType =
   | "unknown";
 
 export interface BriefTarget {
-  /** Human-readable site/service name, e.g. "Frontier Airlines GoWild". */
+  /** Human-readable site/service name, e.g. "Acme Tickets". */
   site: string;
   /** Best resolved entry URL for the task (grounded when possible). */
   url: string;
-  /** Bare hostname, e.g. "flyfrontier.com". */
+  /** Bare hostname, e.g. "example.com". */
   domain: string;
 }
 
@@ -311,14 +311,28 @@ export interface BriefGrounding {
 /**
  * A high-detail, structured brief the planner hands to the execution agent.
  * Carries only task intent + grounded facts — NEVER any secret. Facts that can
- * only be known at run time (exact flight number/time, live availability) are
+ * only be known at run time (a specific available option/time, live availability) are
  * listed in `resolve_live` as instructions, never invented at plan time.
  */
+/**
+ * How the executor should drive the task:
+ *  - "product"   — a concrete item with an Add-to-Cart/Buy button: the scripted
+ *                  product → cart → checkout handlers apply.
+ *  - "form_flow" — a multi-step, form-driven flow (flight/hotel booking, a
+ *                  reservation, an appointment, a registration): there is no
+ *                  add-to-cart; the LLM drives every page from the brief.
+ * Chosen by the planner from task intent, NOT from whether discovery happened to
+ * scrape a price — so a booking is never misrouted into the add-to-cart path.
+ */
+export type BriefFlow = "product" | "form_flow";
+
 export interface ExecutionBrief {
   /** One-line restatement of the resolved goal. */
   objective: string;
   target: BriefTarget;
   login: BriefLogin;
+  /** How the executor drives this task (product vs multi-step form flow). */
+  flow?: BriefFlow;
   /** Domain-specific structured parameters parsed from the task. */
   parameters: Record<string, string>;
   /** Hard requirements/preferences the executor must honor. */
@@ -328,6 +342,25 @@ export interface ExecutionBrief {
   /** Facts the executor must resolve live (not invented at plan time). */
   resolve_live: string[];
   grounding?: BriefGrounding;
+}
+
+/**
+ * Whether a brief should be driven by the LLM page-by-page (a multi-step form
+ * flow) rather than by the scripted product/cart handlers. Single source of
+ * truth shared by the planner (run executor) and the checkout engine so the two
+ * never disagree about which executor owns a task.
+ *
+ * Priority: an explicit planner `flow` wins. Absent that, fall back to the
+ * heuristic — structured parameters present AND no real product candidate found.
+ * A booking/reservation never depends on a scraped price to route correctly.
+ */
+export function isFormFlowBrief(brief: ExecutionBrief | undefined): boolean {
+  if (!brief) return false;
+  if (brief.flow === "form_flow") return true;
+  if (brief.flow === "product") return false;
+  const hasParams = Object.keys(brief.parameters ?? {}).length > 0;
+  const foundProduct = (brief.grounding?.candidates ?? []).length > 0;
+  return hasParams && !foundProduct;
 }
 
 export interface Run {

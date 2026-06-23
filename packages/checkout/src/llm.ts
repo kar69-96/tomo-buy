@@ -34,9 +34,28 @@ export function getExtractModel(): string {
   return process.env.INTENT_MODEL || process.env.AGENT_MODEL || "openai/gpt-4o-mini";
 }
 
+/** A text segment of a (possibly multimodal) message. */
+export interface TextPart {
+  type: "text";
+  text: string;
+}
+
+/**
+ * An image segment, as an OpenAI-style `image_url` block. `url` is a base64
+ * `data:` URL. NEVER place a screenshot here that has not been through
+ * `captureRedactedScreenshot` — see redact.ts and the prime directive.
+ */
+export interface ImagePart {
+  type: "image_url";
+  image_url: { url: string };
+}
+
+export type ContentPart = TextPart | ImagePart;
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  /** Plain text, or a multimodal part list (text + redacted images). */
+  content: string | ContentPart[];
 }
 
 export interface CompleteOptions {
@@ -45,6 +64,11 @@ export interface CompleteOptions {
   /** When true, ask the provider for a JSON object response. */
   json?: boolean;
   maxTokens?: number;
+  /**
+   * Base64 `data:` URLs to attach to the user message as image parts (vision).
+   * MUST already be redacted — no card/PII pixels (redact.ts enforces this).
+   */
+  images?: string[];
 }
 
 /**
@@ -97,16 +121,27 @@ export async function complete(
   return content;
 }
 
-/** Convenience: system + user → text. */
+/** Convenience: system + user → text. Attaches redacted images when provided. */
 export function completePrompt(
   system: string,
   user: string,
   options: CompleteOptions = {},
 ): Promise<string> {
+  // When images are present the user turn becomes a multimodal part list:
+  // the text first, then one image_url block per (already-redacted) data URL.
+  const userContent: string | ContentPart[] = options.images?.length
+    ? [
+        { type: "text", text: user },
+        ...options.images.map(
+          (url): ImagePart => ({ type: "image_url", image_url: { url } }),
+        ),
+      ]
+    : user;
+
   return complete(
     [
       { role: "system", content: system },
-      { role: "user", content: user },
+      { role: "user", content: userContent },
     ],
     options,
   );

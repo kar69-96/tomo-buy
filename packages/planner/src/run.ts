@@ -21,6 +21,7 @@ import {
   updateRun,
   getAgentcardBufferPct,
   getAgentcardMaxAmount,
+  isFormFlowBrief,
 } from "@tomo/core";
 import { query, searchQuery, buy, confirm } from "@tomo/orchestrator";
 import {
@@ -194,7 +195,7 @@ async function advance(run: Run): Promise<RunOutcome> {
   try {
     while (cursor < plan.steps.length) {
       const step = plan.steps[cursor]!;
-      const gate = await runStep(step, ctx);
+      const gate = await runStep(step, ctx, brief);
       if (gate) {
         await updateRun(run.run_id, {
           status: "awaiting_approval",
@@ -226,14 +227,18 @@ async function advance(run: Run): Promise<RunOutcome> {
 }
 
 /** Execute one step. Returns a gate to pause on, or undefined to continue. */
-async function runStep(step: PlanStep, ctx: RunContext): Promise<RunGate | undefined> {
+async function runStep(
+  step: PlanStep,
+  ctx: RunContext,
+  brief?: ExecutionBrief,
+): Promise<RunGate | undefined> {
   switch (step.capability) {
     case "discover":
       return stepDiscover(step, ctx);
     case "login":
       return stepLogin(step, ctx);
     case "purchase":
-      return stepPurchase(step, ctx);
+      return stepPurchase(step, ctx, brief);
     default:
       return undefined; // unknown capability is a no-op (forward-compatible)
   }
@@ -307,14 +312,19 @@ async function stepLogin(step: PlanStep, ctx: RunContext): Promise<RunGate | und
   return undefined;
 }
 
-async function stepPurchase(step: PlanStep, ctx: RunContext): Promise<RunGate | undefined> {
-  const url = (step.args.url as string) ?? ctx.url;
+async function stepPurchase(
+  step: PlanStep,
+  ctx: RunContext,
+  brief?: ExecutionBrief,
+): Promise<RunGate | undefined> {
+  const url = (step.args.url as string) ?? brief?.target?.url ?? ctx.url;
   if (!url) throw new Error("purchase step has no URL to buy");
   const selections = step.args.selections as Record<string, string> | undefined;
+  const briefDriven = isFormFlowBrief(brief);
 
   // First entry: get a quote and pause for human confirmation.
   if (!ctx.purchase) {
-    const order = await buy({ url, selections });
+    const order = await buy({ url, selections, allowUnpriced: briefDriven });
     const breakdown = buildBreakdown(order.payment);
     ctx.purchase = {
       order_id: order.order_id,
@@ -342,6 +352,7 @@ async function stepPurchase(step: PlanStep, ctx: RunContext): Promise<RunGate | 
       order_id: ctx.purchase.order_id,
       loginPlan,
       stopBeforePlaceOrder,
+      brief,
     });
     if (result.parked) {
       ctx.purchase.parked = result.parked as unknown as Record<string, unknown>;

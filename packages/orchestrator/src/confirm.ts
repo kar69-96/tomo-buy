@@ -2,6 +2,7 @@ import {
   type Order,
   type Receipt,
   type CardInfo,
+  type ExecutionBrief,
   TomoError,
   ErrorCodes,
   getOrder,
@@ -45,6 +46,12 @@ export interface ConfirmInput {
    * and no card is typed, so the run is structurally incapable of spending.
    */
   stopBeforePlaceOrder?: boolean;
+  /**
+   * High-detail execution brief from the planner. Carries the objective, grounded
+   * parameters and ordered execution steps that guide the checkout LLM loop through
+   * multi-step task flows the scripted product handlers don't model. No secrets.
+   */
+  brief?: ExecutionBrief;
 }
 
 export interface ConfirmResult {
@@ -153,6 +160,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
           card,
           loginPlan,
           dryRun: input.stopBeforePlaceOrder,
+          brief: input.brief,
         });
       }
     } else {
@@ -163,6 +171,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
         card,
         loginPlan,
         dryRun: input.stopBeforePlaceOrder,
+        brief: input.brief,
       });
     }
 

@@ -30,6 +30,30 @@ describe("buildGeminiRequest", () => {
     expect(req.systemInstruction).toBeUndefined();
   });
 
+  it("maps multimodal content: text part stays text, image data URL → inlineData", () => {
+    const req = buildGeminiRequest([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What do I click?" },
+          {
+            type: "image_url",
+            image_url: { url: "data:image/jpeg;base64,QUJD" },
+          },
+        ],
+      },
+    ]);
+    expect(req.contents).toEqual([
+      {
+        role: "user",
+        parts: [
+          { text: "What do I click?" },
+          { inlineData: { mimeType: "image/jpeg", data: "QUJD" } },
+        ],
+      },
+    ]);
+  });
+
   it("maps json + temperature + maxTokens options", () => {
     const req = buildGeminiRequest([{ role: "user", content: "hi" }], {
       json: true,

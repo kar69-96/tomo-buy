@@ -42,3 +42,9 @@ traces/
 
 # Per-site checkout skills are COMMITTED; ignore only atomic-write temp files.
 site-skills/**/*.tmp
+
+# Redaction-verification screenshots (scripts/verify-redaction.mjs)
+.redaction-check/
+
+# Transient scheduler lock
+.claude/scheduled_tasks.lock

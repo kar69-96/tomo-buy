@@ -4,7 +4,7 @@
  * (Exa search / URL discovery) to resolve the real site + entry URL, then asks
  * the LLM to synthesize a concrete brief: objective, target, login type,
  * structured parameters, constraints, ordered execution steps, and the facts the
- * executor must resolve live (e.g. an exact flight number) rather than invent.
+ * executor must resolve live (e.g. a specific available option) rather than invent.
  *
  * SECURITY: the brief carries only task intent + public/grounded facts. It NEVER
  * contains a card number, password, or session token — those stay in the
@@ -14,6 +14,7 @@ import type {
   ExecutionBrief,
   BriefCandidate,
   BriefLoginType,
+  BriefFlow,
   SearchQueryResponse,
   QueryResponse,
 } from "@tomo/core";
@@ -39,21 +40,26 @@ You are given the user's task, today's date (to resolve relative dates like "tom
 Return STRICT JSON with exactly this shape:
 {
   "objective": string,          // one-line restatement of the resolved goal
-  "site": string,               // human-readable service name, e.g. "Frontier Airlines GoWild"
+  "site": string,               // human-readable service/store name, e.g. "Acme Tickets"
   "url": string,                // best entry URL (prefer a grounded candidate; "" if unknown)
-  "domain": string,             // bare hostname, e.g. "flyfrontier.com" ("" if unknown)
+  "domain": string,             // bare hostname, e.g. "example.com" ("" if unknown)
+  "flow": "product"|"form_flow",// how the executor drives this task (see Flow below)
   "login": { "required": boolean, "type": "email_otp"|"password"|"session"|"agent"|"none"|"unknown", "notes": string },
   "parameters": object,         // domain-specific structured params, string values (origin, destination, date, time_window, fare_type, size, color, ...)
-  "constraints": string[],      // hard requirements/preferences (budget cap, "earliest morning departure", fare class)
+  "constraints": string[],      // hard requirements/preferences (e.g. a budget cap, a preferred time/option, a tier/class)
   "execution_steps": string[],  // ordered, concrete steps for the headless agent
-  "resolve_live": string[]      // facts that can ONLY be known at run time (exact flight number, exact departure time, live availability). Never invent these.
+  "resolve_live": string[]      // facts that can ONLY be known at run time (a specific available option, an exact time slot, current live availability). Never invent these.
 }
+
+Flow (pick exactly one):
+- "product": a concrete physical/digital item bought via an Add-to-Cart / Buy-Now button, then a checkout (e.g. a Shopify product page, a specific item URL).
+- "form_flow": a multi-step, form-driven task with NO add-to-cart — the user fills a search/booking form, picks from live results, then proceeds to payment. ALL travel (flights, hotels, car rental), reservations, appointments, event tickets chosen from a seat/date map, and registrations are "form_flow". When in doubt for anything bookable/schedulable, choose "form_flow".
 
 Rules:
 - Resolve relative dates to absolute ISO dates using today's date.
-- Put anything you cannot know for certain at plan time (a specific flight number, a live price, current availability) in resolve_live as an instruction — do NOT fabricate it.
+- Put anything you cannot know for certain at plan time (a specific available option, a live price, current availability) in resolve_live as an instruction — do NOT fabricate it.
 - Never include passwords, card numbers, or session tokens.
-- Keep execution_steps concrete and ordered; assume the executor sees the page but needs to be told what to choose.`;
+- Keep execution_steps concrete and ordered; assume the executor sees the page but needs to be told what to choose. For a form_flow, the FIRST steps must fully specify how to complete the search/booking form (set trip/option type, fill each field and pick the matching suggestion, set the date in the date picker, set quantities/passengers) and then submit it to reach the results.`;
 
 function safeDomain(url: string): string {
   try {
@@ -131,6 +137,7 @@ interface RawBrief {
   site?: unknown;
   url?: unknown;
   domain?: unknown;
+  flow?: unknown;
   login?: { required?: unknown; type?: unknown; notes?: unknown };
   parameters?: unknown;
   constraints?: unknown;
@@ -138,7 +145,17 @@ interface RawBrief {
   resolve_live?: unknown;
 }
 
-function normalize(r: RawBrief, g: Grounding): ExecutionBrief {
+/** Keywords that mean "this is a multi-step form flow, not an add-to-cart". */
+const FORM_FLOW_RE =
+  /\b(book|booking|flight|fly|airfare|hotel|stay|room|rental|rent a car|reserve|reservation|appointment|schedule|registration|register|ticket|seat|itinerary|check\s*in)\b/i;
+
+/** Resolve the executor flow: explicit planner choice, else a task-intent heuristic. */
+function resolveFlow(raw: unknown, task: string, objective: string): BriefFlow {
+  if (raw === "form_flow" || raw === "product") return raw;
+  return FORM_FLOW_RE.test(task) || FORM_FLOW_RE.test(objective) ? "form_flow" : "product";
+}
+
+function normalize(r: RawBrief, g: Grounding, task: string): ExecutionBrief {
   const url = strOr(r.url, g.url ?? "");
   const domain = strOr(r.domain, url ? safeDomain(url) : "");
   const rawType = r.login?.type;
@@ -146,9 +163,11 @@ function normalize(r: RawBrief, g: Grounding): ExecutionBrief {
     ? (rawType as BriefLoginType)
     : "unknown";
   const notes = typeof r.login?.notes === "string" ? r.login.notes : undefined;
+  const objective = strOr(r.objective, "");
   return {
-    objective: strOr(r.objective, ""),
+    objective,
     target: { site: strOr(r.site, g.name ?? domain), url, domain },
+    flow: resolveFlow(r.flow, task, objective),
     login: { required: Boolean(r.login?.required), type, ...(notes ? { notes } : {}) },
     parameters: asStringMap(r.parameters),
     constraints: asStringArray(r.constraints),
@@ -171,6 +190,7 @@ export function fallbackBrief(task: string, g?: Grounding): ExecutionBrief {
   return {
     objective: task,
     target: { site: g?.name ?? domain, url, domain },
+    flow: resolveFlow(undefined, task, task),
     login: { required: Boolean(domain), type: "unknown" },
     parameters: {},
     constraints: [],
@@ -205,7 +225,7 @@ export async function buildBrief(task: string): Promise<ExecutionBrief> {
       maxTokens: 900,
     });
     if (!raw) return fallbackBrief(task, g);
-    return normalize(raw, g);
+    return normalize(raw, g, task);
   } catch {
     return fallbackBrief(task, g);
   }

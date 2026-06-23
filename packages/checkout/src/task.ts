@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
-import type { Order, ShippingInfo } from "@tomo/core";
+import type { Order, ShippingInfo, ExecutionBrief } from "@tomo/core";
+import { isFormFlowBrief } from "@tomo/core";
 import {
   buildCredentials,
   getStagehandVariables,
@@ -110,6 +111,63 @@ export interface CheckoutInput {
    * sent to the LLM.
    */
   loginPlan?: LoginPlan;
+  /**
+   * High-detail planner brief. For tasks the product page-type handlers don't
+   * model (any multi-step form-driven checkout), the brief's objective, grounded
+   * parameters and ordered execution_steps drive the LLM loop instead. No secrets.
+   */
+  brief?: ExecutionBrief;
+}
+
+/**
+ * A brief-driven task is one the planner grounded as a structured, multi-step
+ * objective (parameters to enter, an ordered plan to follow) rather than a
+ * concrete product to add to a cart. Such tasks are driven by the brief + the
+ * LLM, not the scripted product/cart page handlers. Generic across domains.
+ */
+function isBriefDrivenTask(input: CheckoutInput): boolean {
+  return isFormFlowBrief(input.brief);
+}
+
+/**
+ * Build a brief-driven instruction for the LLM on pages the scripted product
+ * handlers don't model. Hands the executor the objective, grounded parameters,
+ * the full ordered plan, and a hard stop before any irreversible payment.
+ */
+function buildBriefInstruction(
+  brief: ExecutionBrief,
+  dryRun: boolean | undefined,
+): string {
+  const params = Object.entries(brief.parameters ?? {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join(", ");
+  const steps = (brief.execution_steps ?? [])
+    .map((s, i) => `${i + 1}. ${s}`)
+    .join("\n");
+  const constraints = (brief.constraints ?? []).length
+    ? `\nConstraints: ${brief.constraints.join("; ")}.`
+    : "";
+  const live = (brief.resolve_live ?? []).length
+    ? `\nWhen you reach live choices (search results, available times/options), decide per: ${brief.resolve_live.join("; ")}.`
+    : "";
+  const stop = dryRun
+    ? "Reach the payment page (where a credit-card number is requested), then STOP — do NOT enter card details or place/confirm the order."
+    : "Stop just before placing/confirming the order for human review.";
+  return [
+    `Objective: ${brief.objective}`,
+    params ? `Parameters to use: ${params}.` : "",
+    "Do the NEXT step in this ordered plan that applies to the current page (skip steps already done):",
+    steps,
+    constraints,
+    live,
+    "How to act on this page:",
+    "- FIRST, if any cookie banner, promo, newsletter, or modal overlay covers the page, close it (its ×, \"No thanks\", \"Continue\", or Escape) before anything else.",
+    "- Complete EVERY field the current step needs before advancing. For an autocomplete/typeahead field, type the value then pick the suggestion that matches the code/name exactly (e.g. the airport whose code is in parentheses). For a date, open the picker and navigate to the correct month/year, then click the day.",
+    "- After the current section is complete, click the control that ADVANCES the page (Search, Find Flights, Continue, Next, Select). Never leave a finished form unsubmitted.",
+    `IMPORTANT: ${stop} Never create an account or sign in unless the page blocks all further progress without it.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 // ---- Error classification ----
@@ -321,6 +379,8 @@ interface LoopState {
   pagesVisited: number;
   lastUrl: string;
   lastPageType: PageType | null;
+  /** Cheap DOM fingerprint (briefDriven flows) so same-URL form progress isn't a stall. */
+  lastFingerprint: string;
   stallCount: number;
   verificationCode?: string;
   confirmationData?: { orderNumber?: string; total?: string };
@@ -365,6 +425,23 @@ function buildPageInstruction(
   const dryRun = input.dryRun;
   const selections = input.selections;
   const domain = extractDomain(input.order.product.url);
+
+  // Brief-driven tasks: the scripted product handlers don't model an arbitrary
+  // multi-step form flow, so drive those pages from the grounded brief instead.
+  // Payment/confirmation/verification pages keep their specialized handling below.
+  if (
+    isBriefDrivenTask(input) &&
+    input.brief &&
+    pageType !== "payment-form" &&
+    pageType !== "payment-gateway" &&
+    pageType !== "confirmation" &&
+    pageType !== "email-verification"
+  ) {
+    const stallHint = isStalled
+      ? "The previous action didn't advance the page — try a different control (a different button, a dropdown option, or scroll to reveal it). "
+      : "";
+    return `[${domain}] ${stallHint}${buildBriefInstruction(input.brief, dryRun)}`;
+  }
 
   // Context prefix for the LLM
   const done: string[] = [];
@@ -474,6 +551,15 @@ export async function runCheckout(
   const { order, shipping } = input;
   const url = order.product.url;
   const domain = extractDomain(url);
+  // Brief-driven tasks are not product/page-type driven. They legitimately navigate
+  // to search/results URLs and skip the cart/add-to-cart handlers, so the product
+  // guards (redirect-to-search, out-of-stock) must not abort them.
+  const briefDriven = isBriefDrivenTask(input);
+  // A multi-step task flow spans more distinct pages than a product checkout, and
+  // every page is driven by an LLM step (no scripted handlers), so it needs a
+  // larger page/LLM budget.
+  const maxPages = briefDriven ? 32 : MAX_PAGES;
+  const maxLlm = briefDriven ? 45 : MAX_LLM_CALLS;
 
   // 1. Build credentials (Agentcard card injected when provided)
   const creds = buildCredentials(shipping, input.card);
@@ -562,7 +648,7 @@ export async function runCheckout(
     try {
       const origDomain = extractDomain(url);
       const finalDomain = extractDomain(finalUrl);
-      if (origDomain !== finalDomain) {
+      if (!briefDriven && origDomain !== finalDomain) {
         return {
           success: false,
           sessionId: session.id,
@@ -574,8 +660,9 @@ export async function runCheckout(
       }
       const finalUrlObj = new URL(finalUrl);
       const isSearchPage =
-        ["/search", "/find"].some(s => finalUrlObj.pathname.toLowerCase().includes(s)) ||
-        ["q=", "query="].some(s => finalUrlObj.search.toLowerCase().includes(s));
+        !briefDriven &&
+        (["/search", "/find"].some(s => finalUrlObj.pathname.toLowerCase().includes(s)) ||
+          ["q=", "query="].some(s => finalUrlObj.search.toLowerCase().includes(s)));
       if (isSearchPage) {
         return {
           success: false,
@@ -642,18 +729,21 @@ export async function runCheckout(
       pagesVisited: 0,
       lastUrl: page.url(),
       lastPageType: null,
+      lastFingerprint: "",
       stallCount: 0,
       confirmationData: undefined,
     };
 
-    for (let pageIdx = 0; pageIdx < MAX_PAGES; pageIdx++) {
+    for (let pageIdx = 0; pageIdx < maxPages; pageIdx++) {
       state.pagesVisited = pageIdx;
 
       // 9a. Wait for page to settle
       await page.waitForTimeout(2000);
 
-      // 9b. Dismiss popups
+      // 9b. Dismiss popups. A real Escape keypress (not a synthetic event) closes
+      //     framework-driven modals whose backdrops otherwise intercept every click.
       await scriptedDismissPopups(page);
+      try { await page.keyboard.press("Escape"); } catch { /* best-effort */ }
 
       // 9c. Detect page type
       let pageType: PageType;
@@ -717,6 +807,7 @@ export async function runCheckout(
 
       switch (pageType) {
         case "donation-landing": {
+          if (briefDriven) break; // brief-driven; LLM fallback handles it
           // 3-step scripted handler: select amount → one-time → click payment button
           console.log(`  [donation] entering scripted handler, price=${input.order.product.price}`);
           const price = input.order.product.price;
@@ -797,6 +888,7 @@ export async function runCheckout(
         }
 
         case "product": {
+          if (briefDriven) break; // a task page misdetected as product — brief drives it
           if (input.selections && Object.keys(input.selections).length > 0 && !state.selectionsApplied) {
             // Variant selection needed and not yet applied — defer to LLM
             // advanced stays false → LLM fallback handles selection
@@ -918,6 +1010,7 @@ export async function runCheckout(
         }
 
         case "cart": {
+          if (briefDriven) break; // brief-driven; LLM fallback handles it
           advanced =
             (await tryKnownClick()) ||
             await recClick("checkout") ||
@@ -1000,6 +1093,7 @@ export async function runCheckout(
         }
 
         case "shipping-form": {
+          if (briefDriven) break; // a task's own form fields — brief drives the fill, not scripted shipping
           const shipResult = await scriptedFillShipping(
             page, shippingData, skillHints.fillHintsFor("fill-shipping"),
           );
@@ -1288,9 +1382,39 @@ export async function runCheckout(
         outcome: advanced ? "pass" : undefined,
       });
 
-      // 9e. Stall detection — track URL + page type to detect no-progress loops
+      // 9e. Stall detection — track URL + page type to detect no-progress loops.
+      //     A task flow fills a multi-field form without navigating, so URL+pageType
+      //     alone reads as "stalled" even while real progress happens. Fold in a cheap
+      //     DOM fingerprint (filled-input count + total typed length) so form progress
+      //     on the same page counts as advance.
       const currentUrl = page.url();
-      if (currentUrl === state.lastUrl && pageType === state.lastPageType) {
+      const fingerprint = briefDriven
+        ? await page
+            .evaluate(() => {
+              const inputs = Array.from(document.querySelectorAll("input, select, textarea")) as HTMLInputElement[];
+              let filled = 0;
+              let len = 0;
+              for (const el of inputs) {
+                const v = (el.value || "").trim();
+                if (v) { filled++; len += v.length; }
+              }
+              // Fold in scroll position + interactive-element count so that
+              // scrolling a long page (to reveal flight/fare options) and DOM
+              // changes (new options rendering) both count as real progress,
+              // not a stall.
+              const interactive = document.querySelectorAll(
+                'a, button, input, select, textarea, [role="button"], [role="option"]',
+              ).length;
+              const scrollY = Math.round(window.scrollY / 200);
+              return `${filled}:${len}:${interactive}:${scrollY}`;
+            })
+            .catch(() => "")
+        : "";
+      const sameContent =
+        currentUrl === state.lastUrl &&
+        pageType === state.lastPageType &&
+        (!briefDriven || fingerprint === state.lastFingerprint);
+      if (sameContent) {
         state.stallCount++;
         console.log(`  [stall] same url+page type ${state.stallCount} times`);
       } else {
@@ -1298,10 +1422,13 @@ export async function runCheckout(
       }
       state.lastUrl = currentUrl;
       state.lastPageType = pageType;
+      state.lastFingerprint = fingerprint;
 
-      // Break out if completely stuck on same page (5+ stalls = no progress possible)
-      if (state.stallCount >= 5) {
-        console.log(`  [stuck] 5+ stalls on ${pageType} — giving up`);
+      // Break out if completely stuck on same page. Brief-driven tasks get a larger
+      // budget (more distinct pages, every page is an LLM step).
+      const stuckLimit = briefDriven ? 7 : 5;
+      if (state.stallCount >= stuckLimit) {
+        console.log(`  [stuck] ${state.stallCount} stalls on ${pageType} — giving up`);
         break;
       }
 
@@ -1353,11 +1480,11 @@ export async function runCheckout(
 
       // 9g. LLM fallback — if scripted handler didn't advance, or stalled ≥2 times
       const needsLlm = !advanced || state.stallCount >= 2;
-      if (needsLlm && state.llmCalls < MAX_LLM_CALLS) {
+      if (needsLlm && state.llmCalls < maxLlm) {
         const isStalled = state.stallCount >= 2;
         const instruction = buildPageInstruction(pageType, input, state, isStalled);
 
-        console.log(`  [llm fallback ${state.llmCalls + 1}/${MAX_LLM_CALLS}${isStalled ? " STALLED" : ""}] ${instruction.slice(0, 100)}...`);
+        console.log(`  [llm fallback ${state.llmCalls + 1}/${maxLlm}${isStalled ? " STALLED" : ""}] ${instruction.slice(0, 100)}...`);
         tracer?.record({
           pageIndex: pageIdx,
           url: page.url(),
@@ -1371,7 +1498,23 @@ export async function runCheckout(
         });
 
         try {
-          await playwrightAct(page, instruction, { variables: stagehandVars });
+          // The iterative executor re-snapshots between actions and types with real
+          // keystrokes, so it can drive dynamic widgets (autocomplete suggestion
+          // lists, date pickers, steppers) that a single-pass `.fill()` can't. Used
+          // for every LLM fallback — it's a strict superset of the single-pass path.
+          await playwrightAct(page, instruction, {
+            variables: stagehandVars,
+            iterative: true,
+            // Form-flow pages (a flight/booking search form) need more in-page
+            // rounds to fill several widgets (autocompletes, date picker, steppers)
+            // and then submit, before the outer loop re-detects the page.
+            maxSteps: briefDriven ? 10 : undefined,
+            // Card data may be present on payment pages → aggressively redact
+            // the screenshot (cover every input/iframe) so a CDP-filled PAN
+            // can never reach the vision model.
+            containsCardData:
+              pageType === "payment-form" || pageType === "payment-gateway",
+          });
           state.llmCalls++;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -1380,7 +1523,7 @@ export async function runCheckout(
         }
 
         // After LLM on product page, mark selections as applied and try scripted ATC
-        if (pageType === "product") {
+        if (pageType === "product" && !briefDriven) {
           // Mark selections as applied after first LLM attempt
           if (input.selections && Object.keys(input.selections).length > 0) {
             state.selectionsApplied = true;
@@ -1462,8 +1605,8 @@ export async function runCheckout(
         if (page.url() !== currentUrl) {
           state.stallCount = 0;
         }
-      } else if (needsLlm && state.llmCalls >= MAX_LLM_CALLS) {
-        console.log(`  [budget exhausted] ${state.llmCalls}/${MAX_LLM_CALLS} LLM calls used`);
+      } else if (needsLlm && state.llmCalls >= maxLlm) {
+        console.log(`  [budget exhausted] ${state.llmCalls}/${maxLlm} LLM calls used`);
         break;
       }
     }
@@ -1482,8 +1625,11 @@ export async function runCheckout(
       // Ignore page read errors
     }
 
-    // 11. Price verification
-    if (finalTotal && order.payment.price) {
+    // 11. Price verification — only for a concrete product with a known price.
+    // A form_flow (flight/booking) has no single fixed product price to compare,
+    // and a no-spend run legitimately ends without a final total, so a "$34 vs
+    // $0.00" mismatch here is noise, not a failure.
+    if (finalTotal && order.payment.price && !briefDriven) {
       if (!isPriceAcceptable(order.payment.price, finalTotal)) {
         return {
           success: false,

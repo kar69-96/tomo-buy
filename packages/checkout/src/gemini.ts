@@ -21,11 +21,37 @@ import type { ChatMessage, CompleteOptions } from "./llm.js";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 interface GeminiPart {
-  text: string;
+  text?: string;
+  inlineData?: { mimeType: string; data: string };
 }
 interface GeminiContent {
   role: "user" | "model";
   parts: GeminiPart[];
+}
+
+/** Flatten message content (string or multimodal parts) to plain text. */
+function textFromContent(content: ChatMessage["content"]): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("\n");
+}
+
+/** Map message content to Gemini parts, converting image data URLs to inlineData. */
+function partsFromContent(content: ChatMessage["content"]): GeminiPart[] {
+  if (typeof content === "string") return [{ text: content }];
+  const parts: GeminiPart[] = [];
+  for (const p of content) {
+    if (p.type === "text") {
+      parts.push({ text: p.text });
+    } else {
+      // Expect a base64 data URL: data:<mime>;base64,<data>
+      const m = p.image_url.url.match(/^data:([^;]+);base64,(.*)$/);
+      if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+    }
+  }
+  return parts;
 }
 export interface GeminiRequest {
   contents: GeminiContent[];
@@ -49,7 +75,7 @@ export function buildGeminiRequest(
 ): GeminiRequest {
   const systemText = messages
     .filter((m) => m.role === "system")
-    .map((m) => m.content)
+    .map((m) => textFromContent(m.content))
     .join("\n\n")
     .trim();
 
@@ -57,7 +83,7 @@ export function buildGeminiRequest(
     .filter((m) => m.role !== "system")
     .map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
+      parts: partsFromContent(m.content),
     }));
 
   const request: GeminiRequest = {

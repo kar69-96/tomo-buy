@@ -16,6 +16,16 @@ export interface BuyInput {
   url: string;
   shipping?: ShippingInfo;
   selections?: Record<string, string>;
+  /**
+   * Some checkouts have no product-page price to discover at quote time — the real
+   * total is only known after a multi-step selection happens live in the browser
+   * (any non-product checkout: a reservation, registration, service, etc.). When
+   * set, a failed/empty price discovery degrades to a price-unknown order instead
+   * of throwing, so a no-spend oversight run can still drive to the payment page
+   * and read the observed total there. Product purchases leave this false and stay
+   * strict.
+   */
+  allowUnpriced?: boolean;
 }
 
 export async function buy(input: BuyInput): Promise<Order> {
@@ -57,22 +67,35 @@ export async function buy(input: BuyInput): Promise<Order> {
     }
   }
 
-  // 3. Discover price
-  let discovery;
+  // 3. Discover price. When allowUnpriced is set, a failed discovery is expected
+  //    (no product-page price to quote) — degrade to a price-unknown order so the
+  //    browser can still drive to payment and read the real total live.
+  let productName: string;
+  let price: string;
+  let priceSource: string;
+  let imageUrl: string | undefined;
   try {
-    discovery = await discoverPrice(url, resolvedShipping);
+    const discovery = await discoverPrice(url, resolvedShipping);
+    productName = discovery.name;
+    price = discovery.price;
+    priceSource = discovery.method;
+    imageUrl = discovery.image_url;
   } catch (e) {
-    if (e instanceof TomoError) throw e;
-    throw new TomoError(
-      ErrorCodes.PRICE_EXTRACTION_FAILED,
-      `Price discovery failed for ${url}: ${e instanceof Error ? e.message : "unknown error"}`,
-    );
+    if (e instanceof TomoError && !input.allowUnpriced) throw e;
+    if (!input.allowUnpriced) {
+      throw new TomoError(
+        ErrorCodes.PRICE_EXTRACTION_FAILED,
+        `Price discovery failed for ${url}: ${e instanceof Error ? e.message : "unknown error"}`,
+      );
+    }
+    // No price at quote time — the real total is read at the payment page.
+    productName = (() => {
+      try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+    })();
+    price = "0.00";
+    priceSource = "unpriced_booking";
+    imageUrl = undefined;
   }
-
-  const productName = discovery.name;
-  const price = discovery.price;
-  const priceSource = discovery.method;
-  const imageUrl = discovery.image_url;
 
   // 4. Calculate fees
   const fee = calculateFee(price);
