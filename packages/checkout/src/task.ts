@@ -24,6 +24,7 @@ import {
   scriptedFillBilling,
   scriptedUncheckBillingSameAsShipping,
   scriptedClickButton,
+  scriptedClickSelector,
   scriptedSelectOption,
   scriptedFillVerificationCode,
   detectPageType,
@@ -37,6 +38,15 @@ import { executeLogin, seedSessionCookies } from "./login.js";
 import type { LoginPlan } from "./login.js";
 import { makeTracerFromEnv } from "./trace.js";
 import type { TraceMode } from "./trace.js";
+import { SkillRecorder } from "./skill-recorder.js";
+import {
+  loadSiteSkill,
+  writeSiteSkill,
+  mergeSiteSkill,
+  buildSelectorHints,
+} from "./site-skill.js";
+import { renderSkillMarkdown } from "./skill-renderer.js";
+import { narrateLearnings } from "./skill-narrator.js";
 
 // ---- Checkout steps ----
 
@@ -436,6 +446,28 @@ function buildPageInstruction(
 
 // ---- Full checkout orchestration ----
 
+/**
+ * Persist the per-site checkout skill after a SUCCESSFUL, non-dry-run checkout.
+ * Best-effort: any failure here must never fail an already-completed purchase.
+ * Skips when no scripted selectors were captured (an all-LLM run teaches nothing).
+ */
+async function persistSkill(recorder: SkillRecorder, domain: string): Promise<void> {
+  try {
+    if (recorder.selectorCount === 0) return;
+    const fresh = recorder.finalize();
+    const merged = mergeSiteSkill(loadSiteSkill(domain), fresh);
+    const learnings = await narrateLearnings(merged);
+    const withProse = learnings ? { ...merged, learnings } : merged;
+    writeSiteSkill(withProse, renderSkillMarkdown(withProse));
+    console.log(
+      `  [skill] wrote site-skills/${domain}/SKILL.md (${withProse.selectors.length} selectors, v${withProse.version})`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`  [skill] write skipped: ${msg.slice(0, 100)}`);
+  }
+}
+
 export async function runCheckout(
   input: CheckoutInput,
 ): Promise<CheckoutResult> {
@@ -492,6 +524,10 @@ export async function runCheckout(
 
   // 4b. Optional deep tracer (JSONL + screenshots) — no-op unless CHECKOUT_TRACE_DIR set.
   const tracer = makeTracerFromEnv(session.id);
+
+  // 4c. Per-site skill: always-on recorder + read-back hints from any prior success.
+  const recorder = new SkillRecorder(domain);
+  const skillHints = buildSelectorHints(loadSiteSkill(domain));
 
   try {
     // 5. The page the checkout loop drives
@@ -634,6 +670,46 @@ export async function runCheckout(
       let iterMode: TraceMode = "scripted";
       let iterAction = `page:${pageType}`;
 
+      // 9c-skill. Record the page in the flow, and wrap scripted clicks/selects so
+      // the literal selector that matched is captured for the site skill.
+      recorder.observePage(pageIdx, pageType, page.url());
+      const recClick = (target: string): Promise<boolean> =>
+        scriptedClickButton(page, target, (m) =>
+          recorder.recordSelector({
+            pageType,
+            action: "click-button",
+            fieldLabel: target,
+            matchedSelector: m.selector ?? `text=${m.text}`,
+            provenance: "STRUCTURAL",
+          }),
+        );
+      const recSelect = (target: string, ty: "radio" | "checkbox" = "radio"): Promise<boolean> =>
+        scriptedSelectOption(page, target, ty, (m) =>
+          recorder.recordSelector({
+            pageType,
+            action: "select-option",
+            fieldLabel: target,
+            matchedSelector: m.selector ?? `text=${m.text}`,
+            provenance: "SELECTION",
+          }),
+        );
+      // Read-back: try selectors known to work on this page type from a prior run.
+      const tryKnownClick = async (): Promise<boolean> => {
+        for (const sel of skillHints.forClick(pageType)) {
+          if (await scriptedClickSelector(page, sel)) {
+            recorder.recordSelector({
+              pageType,
+              action: "click-button",
+              fieldLabel: "known",
+              matchedSelector: sel,
+              provenance: "STRUCTURAL",
+            });
+            return true;
+          }
+        }
+        return false;
+      };
+
       // 9d. Run page-type handler (all scripted, 0 LLM)
       let advanced = false;
 
@@ -653,7 +729,7 @@ export async function runCheckout(
 
             // Try radio buttons with matching value
             for (const v of variants) {
-              if (await scriptedSelectOption(page, v, "radio")) {
+              if (await recSelect(v, "radio")) {
                 amountSelected = true;
                 console.log(`  [donation] selected amount via radio: ${v}`);
                 break;
@@ -690,9 +766,9 @@ export async function runCheckout(
           if (amountSelected) {
             await page.waitForTimeout(500);
             const oneTimeSelected =
-              await scriptedSelectOption(page, "one-time", "radio") ||
-              await scriptedSelectOption(page, "one time", "radio") ||
-              await scriptedSelectOption(page, "just once", "radio");
+              await recSelect("one-time", "radio") ||
+              await recSelect("one time", "radio") ||
+              await recSelect("just once", "radio");
             if (oneTimeSelected) console.log(`  [donation] selected one-time frequency`);
           }
 
@@ -700,14 +776,14 @@ export async function runCheckout(
           if (amountSelected) {
             await page.waitForTimeout(500);
             advanced =
-              await scriptedClickButton(page, "donate by credit") ||
-              await scriptedClickButton(page, "donate by card") ||
-              await scriptedClickButton(page, "credit card") ||
-              await scriptedClickButton(page, "credit/debit card") ||
-              await scriptedClickButton(page, "donate now") ||
-              await scriptedClickButton(page, "continue") ||
-              await scriptedClickButton(page, "donate") ||
-              await scriptedClickButton(page, "give now");
+              await recClick("donate by credit") ||
+              await recClick("donate by card") ||
+              await recClick("credit card") ||
+              await recClick("credit/debit card") ||
+              await recClick("donate now") ||
+              await recClick("continue") ||
+              await recClick("donate") ||
+              await recClick("give now");
             if (advanced) console.log(`  [donation] clicked payment button`);
           }
 
@@ -796,12 +872,13 @@ export async function runCheckout(
           // No selections needed, or selections already applied — try scripted add-to-cart
           // Prefer "buy now" (goes directly to checkout, skips cart drawer)
           const addedToCart =
-            await scriptedClickButton(page, "buy now") ||
-            await scriptedClickButton(page, "add to cart") ||
-            await scriptedClickButton(page, "add to bag") ||
-            await scriptedClickButton(page, "add to basket") ||
-            await scriptedClickButton(page, "ship it") ||
-            await scriptedClickButton(page, "deliver it");
+            (await tryKnownClick()) ||
+            await recClick("buy now") ||
+            await recClick("add to cart") ||
+            await recClick("add to bag") ||
+            await recClick("add to basket") ||
+            await recClick("ship it") ||
+            await recClick("deliver it");
           if (addedToCart) {
             state.addedToCart = true;
             console.log(`  [product] added to cart via scripted click`);
@@ -814,12 +891,12 @@ export async function runCheckout(
             } else {
               // Still on product page — try checkout buttons in cart drawer
               advanced =
-                await scriptedClickButton(page, "checkout") ||
-                await scriptedClickButton(page, "proceed to checkout") ||
-                await scriptedClickButton(page, "go to checkout") ||
-                await scriptedClickButton(page, "secure checkout") ||
-                await scriptedClickButton(page, "view bag") ||
-                await scriptedClickButton(page, "view cart");
+                await recClick("checkout") ||
+                await recClick("proceed to checkout") ||
+                await recClick("go to checkout") ||
+                await recClick("secure checkout") ||
+                await recClick("view bag") ||
+                await recClick("view cart");
               // If no checkout button found, navigate directly to /checkout
               if (!advanced) {
                 console.log(`  [product] no checkout button in drawer, navigating to /checkout`);
@@ -840,13 +917,14 @@ export async function runCheckout(
 
         case "cart": {
           advanced =
-            await scriptedClickButton(page, "checkout") ||
-            await scriptedClickButton(page, "proceed to checkout") ||
-            await scriptedClickButton(page, "continue to checkout") ||
-            await scriptedClickButton(page, "secure checkout") ||
-            await scriptedClickButton(page, "go to checkout") ||
-            await scriptedClickButton(page, "start checkout") ||
-            await scriptedClickButton(page, "begin checkout");
+            (await tryKnownClick()) ||
+            await recClick("checkout") ||
+            await recClick("proceed to checkout") ||
+            await recClick("continue to checkout") ||
+            await recClick("secure checkout") ||
+            await recClick("go to checkout") ||
+            await recClick("start checkout") ||
+            await recClick("begin checkout");
           // Fallback: navigate directly to /checkout if buttons didn't work
           if (!advanced) {
             console.log(`  [cart] no checkout button found, navigating to /checkout`);
@@ -879,16 +957,16 @@ export async function runCheckout(
           }
           // Otherwise fall back to guest checkout (default behavior).
           advanced =
-            await scriptedClickButton(page, "guest checkout") ||
-            await scriptedClickButton(page, "continue as guest") ||
-            await scriptedClickButton(page, "continue without account") ||
-            await scriptedClickButton(page, "guest") ||
-            await scriptedClickButton(page, "checkout as guest") ||
-            await scriptedClickButton(page, "continue without signing in") ||
-            await scriptedClickButton(page, "skip sign in") ||
-            await scriptedClickButton(page, "shop as guest") ||
-            await scriptedClickButton(page, "checkout without an account") ||
-            await scriptedClickButton(page, "no thanks");
+            await recClick("guest checkout") ||
+            await recClick("continue as guest") ||
+            await recClick("continue without account") ||
+            await recClick("guest") ||
+            await recClick("checkout as guest") ||
+            await recClick("continue without signing in") ||
+            await recClick("skip sign in") ||
+            await recClick("shop as guest") ||
+            await recClick("checkout without an account") ||
+            await recClick("no thanks");
           break;
         }
 
@@ -905,10 +983,10 @@ export async function runCheckout(
                 console.log(`  [email-verification] filled code: ${code}`);
                 await page.waitForTimeout(1000);
                 advanced =
-                  await scriptedClickButton(page, "verify") ||
-                  await scriptedClickButton(page, "submit") ||
-                  await scriptedClickButton(page, "continue") ||
-                  await scriptedClickButton(page, "confirm");
+                  await recClick("verify") ||
+                  await recClick("submit") ||
+                  await recClick("continue") ||
+                  await recClick("confirm");
               }
             } else {
               console.log("  [email-verification] timed out waiting for code");
@@ -920,7 +998,16 @@ export async function runCheckout(
         }
 
         case "shipping-form": {
-          const filled = await scriptedFillShipping(page, shippingData);
+          const shipResult = await scriptedFillShipping(
+            page, shippingData, skillHints.fillHintsFor("fill-shipping"),
+          );
+          const filled = shipResult.filled;
+          for (const m of shipResult.matched) {
+            recorder.recordSelector({
+              pageType, action: "fill-shipping",
+              fieldLabel: m.field, matchedSelector: m.selector, provenance: "USER_INPUT",
+            });
+          }
           state.shippingFilled = filled.length > 0;
           if (filled.length > 0) {
             console.log(`  [shipping] filled ${filled.length} fields: ${filled.join(", ")}`);
@@ -947,11 +1034,11 @@ export async function runCheckout(
           if (state.shippingFilled || filled.length > 0) {
             await page.waitForTimeout(1000);
             advanced =
-              await scriptedClickButton(page, "continue") ||
-              await scriptedClickButton(page, "continue to payment") ||
-              await scriptedClickButton(page, "next") ||
-              await scriptedClickButton(page, "save and continue") ||
-              await scriptedClickButton(page, "continue to shipping");
+              await recClick("continue") ||
+              await recClick("continue to payment") ||
+              await recClick("next") ||
+              await recClick("save and continue") ||
+              await recClick("continue to shipping");
           }
           break;
         }
@@ -961,7 +1048,16 @@ export async function runCheckout(
           // Combined checkout pages (Glossier, etc.) show shipping + payment on same page.
           // Fill shipping first if not done yet.
           if (!state.shippingFilled) {
-            const shippingFilled = await scriptedFillShipping(page, shippingData);
+            const shipResult2 = await scriptedFillShipping(
+              page, shippingData, skillHints.fillHintsFor("fill-shipping"),
+            );
+            const shippingFilled = shipResult2.filled;
+            for (const m of shipResult2.matched) {
+              recorder.recordSelector({
+                pageType, action: "fill-shipping",
+                fieldLabel: m.field, matchedSelector: m.selector, provenance: "USER_INPUT",
+              });
+            }
             state.shippingFilled = shippingFilled.length > 0;
             if (shippingFilled.length > 0) {
               console.log(`  [payment-page shipping] filled ${shippingFilled.length} fields: ${shippingFilled.join(", ")}`);
@@ -985,10 +1081,10 @@ export async function runCheckout(
             }
             // Click continue if there's a shipping-to-payment transition button
             await page.waitForTimeout(1000);
-            await scriptedClickButton(page, "continue") ||
-              await scriptedClickButton(page, "continue to payment") ||
-              await scriptedClickButton(page, "next") ||
-              await scriptedClickButton(page, "save and continue");
+            await recClick("continue") ||
+              await recClick("continue to payment") ||
+              await recClick("next") ||
+              await recClick("save and continue");
             await page.waitForTimeout(2000);
           }
 
@@ -1000,9 +1096,18 @@ export async function runCheckout(
             await page.waitForTimeout(500);
 
             // Fill card fields
-            const cardResult = await scriptedFillCardFields(page, cdpCreds);
+            const cardResult = await scriptedFillCardFields(
+              page, cdpCreds, skillHints.fillHintsFor("fill-card"),
+            );
             state.cardFilled = cardResult.filled > 0;
             console.log(`  [card] filled ${cardResult.filled} fields via ${cardResult.method}`);
+            for (const m of cardResult.matched) {
+              // CDP_SECRET: label + selector only — never a card value.
+              recorder.recordSelector({
+                pageType, action: "fill-card",
+                fieldLabel: m.field, matchedSelector: m.selector, provenance: "CDP_SECRET",
+              });
+            }
 
             // Wait longer for form validation after card fill
             if (state.cardFilled) {
@@ -1062,15 +1167,16 @@ export async function runCheckout(
 
           // Live: click place order — try multiple common button labels
           advanced =
-            await scriptedClickButton(page, "place order") ||
-            await scriptedClickButton(page, "complete purchase") ||
-            await scriptedClickButton(page, "submit order") ||
-            await scriptedClickButton(page, "donate") ||
-            await scriptedClickButton(page, "pay now") ||
-            await scriptedClickButton(page, "complete order") ||
-            await scriptedClickButton(page, "confirm order") ||
-            await scriptedClickButton(page, "pay") ||
-            await scriptedClickButton(page, "submit payment");
+            (await tryKnownClick()) ||
+            await recClick("place order") ||
+            await recClick("complete purchase") ||
+            await recClick("submit order") ||
+            await recClick("donate") ||
+            await recClick("pay now") ||
+            await recClick("complete order") ||
+            await recClick("confirm order") ||
+            await recClick("pay") ||
+            await recClick("submit payment");
 
           // Post-submit: check for inline validation errors (async merchant responses)
           if (advanced) {
@@ -1109,6 +1215,9 @@ export async function runCheckout(
             const newCache = await extractDomainCache(page, domain);
             saveDomainCache(newCache);
           } catch { /* best-effort */ }
+
+          // Persist the per-site skill (best-effort; never fails the purchase).
+          await persistSkill(recorder, domain);
 
           return {
             success: true,
@@ -1209,6 +1318,8 @@ export async function runCheckout(
             saveDomainCache(newCache);
           } catch { /* best-effort */ }
 
+          await persistSkill(recorder, domain);
+
           return {
             success: true,
             orderNumber: data.orderNumber,
@@ -1277,12 +1388,12 @@ export async function runCheckout(
           if (!state.addedToCart) {
             await page.waitForTimeout(1000);
             const postLlmAtc =
-              await scriptedClickButton(page, "buy now") ||
-              await scriptedClickButton(page, "add to cart") ||
-              await scriptedClickButton(page, "add to bag") ||
-              await scriptedClickButton(page, "add to basket") ||
-              await scriptedClickButton(page, "ship it") ||
-              await scriptedClickButton(page, "deliver it");
+              await recClick("buy now") ||
+              await recClick("add to cart") ||
+              await recClick("add to bag") ||
+              await recClick("add to basket") ||
+              await recClick("ship it") ||
+              await recClick("deliver it");
             if (postLlmAtc) {
               state.addedToCart = true;
               console.log(`  [post-llm] scripted add-to-cart succeeded`);
@@ -1290,11 +1401,11 @@ export async function runCheckout(
               await page.waitForTimeout(3000);
               // Try checkout buttons in cart drawer
               const wentToCheckout =
-                await scriptedClickButton(page, "checkout") ||
-                await scriptedClickButton(page, "proceed to checkout") ||
-                await scriptedClickButton(page, "go to checkout") ||
-                await scriptedClickButton(page, "view bag") ||
-                await scriptedClickButton(page, "view cart");
+                await recClick("checkout") ||
+                await recClick("proceed to checkout") ||
+                await recClick("go to checkout") ||
+                await recClick("view bag") ||
+                await recClick("view cart");
               if (wentToCheckout) console.log(`  [post-llm] navigated to checkout via button`);
             }
           }
@@ -1314,6 +1425,8 @@ export async function runCheckout(
             const newCache = await extractDomainCache(page, domain);
             saveDomainCache(newCache);
           } catch { /* best-effort */ }
+
+          await persistSkill(recorder, domain);
 
           return {
             success: true,
@@ -1408,6 +1521,9 @@ export async function runCheckout(
         durationMs: Date.now() - startMs,
       };
     }
+
+    // Persist the per-site skill on a text-confirmed success (best-effort).
+    if (confirmedViaPageText) await persistSkill(recorder, domain);
 
     return {
       success: confirmedViaPageText,

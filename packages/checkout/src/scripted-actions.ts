@@ -142,17 +142,35 @@ interface ShippingData {
   phone: string;
 }
 
+export interface ShippingFillResult {
+  /** Logical field labels filled (e.g. "email", "city"). */
+  filled: string[];
+  /** The literal selector that matched for each filled field. */
+  matched: { field: string; selector: string }[];
+}
+
 export async function scriptedFillShipping(
   page: Page,
   data: ShippingData,
-): Promise<string[]> {
-  const filled = await page.evaluate((d) => {
+  hints: Partial<Record<string, string[]>> = {},
+): Promise<ShippingFillResult> {
+  const out = await page.evaluate(({ d, h }) => {
     const results: string[] = [];
+    const matchedByField: Record<string, string> = {};
 
-    function find(selectors: string[]): HTMLInputElement | HTMLSelectElement | null {
-      for (const s of selectors) {
-        const el = document.querySelector(s);
-        if (el) return el as HTMLInputElement | HTMLSelectElement;
+    function find(
+      field: string,
+      selectors: string[],
+    ): HTMLInputElement | HTMLSelectElement | null {
+      // Known selectors from a prior successful run are tried first (read-back).
+      const all = [...(h[field] ?? []), ...selectors];
+      for (const s of all) {
+        let el: Element | null = null;
+        try { el = document.querySelector(s); } catch { el = null; }
+        if (el) {
+          matchedByField[field] = s;
+          return el as HTMLInputElement | HTMLSelectElement;
+        }
       }
       return null;
     }
@@ -184,14 +202,14 @@ export async function scriptedFillShipping(
     }
 
     // Email
-    const email = find([
+    const email = find("email", [
       'input[autocomplete="email"]', 'input[type="email"]',
       'input[name*="email" i]', 'input[id*="email" i]',
     ]);
     if (email) { fillInput(email as HTMLInputElement, d.email); results.push("email"); }
 
     // Combined full name (many stores use a single name field)
-    const fullName = find([
+    const fullName = find("fullName", [
       'input[autocomplete="name"]', 'input[name*="fullName" i]',
       'input[name*="full_name" i]', 'input[name="name"]',
       'input[id*="fullName" i]',
@@ -202,7 +220,7 @@ export async function scriptedFillShipping(
     }
 
     // First name (skip if full name was already filled)
-    const fn = !fullName ? find([
+    const fn = !fullName ? find("firstName", [
       'input[autocomplete="given-name"]', 'input[name*="firstName" i]',
       'input[name*="first_name" i]', 'input[id*="firstName" i]',
       'input[name*="first-name" i]',
@@ -210,7 +228,7 @@ export async function scriptedFillShipping(
     if (fn) { fillInput(fn as HTMLInputElement, d.firstName); results.push("firstName"); }
 
     // Last name (skip if full name was already filled)
-    const ln = !fullName ? find([
+    const ln = !fullName ? find("lastName", [
       'input[autocomplete="family-name"]', 'input[name*="lastName" i]',
       'input[name*="last_name" i]', 'input[id*="lastName" i]',
       'input[name*="last-name" i]',
@@ -218,7 +236,7 @@ export async function scriptedFillShipping(
     if (ln) { fillInput(ln as HTMLInputElement, d.lastName); results.push("lastName"); }
 
     // Address
-    const addr = find([
+    const addr = find("address", [
       'input[autocomplete="address-line1"]', 'input[name*="address1" i]',
       'input[name*="street" i]', 'input[id*="address1" i]',
       'input[name*="line1" i]', 'input[name*="streetAddress" i]',
@@ -228,7 +246,7 @@ export async function scriptedFillShipping(
     if (addr) { fillInput(addr as HTMLInputElement, d.street); results.push("address"); }
 
     // Apartment
-    const apt = find([
+    const apt = find("apartment", [
       'input[autocomplete="address-line2"]', 'input[name*="address2" i]',
       'input[name*="apartment" i]', 'input[id*="address2" i]', 'input[id*="apartment" i]',
       'input[name*="line2" i]', 'input[name*="address_2" i]', 'input[name*="apt" i]',
@@ -236,13 +254,13 @@ export async function scriptedFillShipping(
     if (apt && d.apartment) { fillInput(apt as HTMLInputElement, d.apartment); results.push("apartment"); }
 
     // City
-    const city = find([
+    const city = find("city", [
       'input[autocomplete="address-level2"]', 'input[name*="city" i]', 'input[id*="city" i]',
     ]);
     if (city) { fillInput(city as HTMLInputElement, d.city); results.push("city"); }
 
     // State — try select first, then input (many stores use text input for state)
-    const stateSelect = find([
+    const stateSelect = find("state", [
       'select[autocomplete="address-level1"]', 'select[name*="zone" i]',
       'select[name*="state" i]', 'select[name*="province" i]',
       'select[name*="region" i]',
@@ -250,7 +268,7 @@ export async function scriptedFillShipping(
     if (stateSelect) {
       if (fillSelect(stateSelect as HTMLSelectElement, d.state)) results.push("state");
     } else {
-      const stateInput = find([
+      const stateInput = find("state", [
         'input[autocomplete="address-level1"]', 'input[name*="state" i]',
         'input[name*="province" i]', 'input[name*="region" i]',
         'input[id*="state" i]',
@@ -259,7 +277,7 @@ export async function scriptedFillShipping(
     }
 
     // ZIP
-    const zip = find([
+    const zip = find("zip", [
       'input[autocomplete="postal-code"]', 'input[name*="zip" i]',
       'input[name*="postal" i]', 'input[id*="zip" i]',
       'input[name*="postalCode" i]', 'input[name*="zipCode" i]',
@@ -267,14 +285,14 @@ export async function scriptedFillShipping(
     if (zip) { fillInput(zip as HTMLInputElement, d.zip); results.push("zip"); }
 
     // Country — try select first, then input
-    const countrySelect = find([
+    const countrySelect = find("country", [
       'select[autocomplete="country"]', 'select[name*="country" i]',
       'select[id*="country" i]',
     ]);
     if (countrySelect && d.country) {
       if (fillSelect(countrySelect as HTMLSelectElement, d.country)) results.push("country");
     } else {
-      const countryInput = find([
+      const countryInput = find("country", [
         'input[autocomplete="country"]', 'input[name*="country" i]',
         'input[id*="country" i]',
       ]);
@@ -285,14 +303,19 @@ export async function scriptedFillShipping(
     }
 
     // Phone
-    const phone = find([
+    const phone = find("phone", [
       'input[autocomplete="tel"]', 'input[type="tel"]',
       'input[name*="phone" i]', 'input[id*="phone" i]',
     ]);
     if (phone) { fillInput(phone as HTMLInputElement, d.phone); results.push("phone"); }
 
-    return results;
-  }, data);
+    const matched = results
+      .map((field) => ({ field, selector: matchedByField[field] }))
+      .filter((m): m is { field: string; selector: string } => Boolean(m.selector));
+    return { results, matched };
+  }, { d: data, h: hints });
+
+  const filled = out.results;
 
   // Dismiss autocomplete popups after filling
   if (filled.length > 0) {
@@ -312,15 +335,26 @@ export async function scriptedFillShipping(
     });
   }
 
-  return filled;
+  return { filled, matched: out.matched };
 }
 
 // ---- Scripted card field fill (main page CSS selectors + iframe fallback) ----
 
+export interface CardFillResult {
+  filled: number;
+  method: "main-page" | "iframe" | "none";
+  /**
+   * Selectors that matched for card fields. Carries field LABELS (card_number,
+   * card_cvv, …) + selectors only — never a card value (prime directive).
+   */
+  matched: { field: string; selector: string }[];
+}
+
 export async function scriptedFillCardFields(
   page: Page,
   cdpCreds: Record<string, string>,
-): Promise<{ filled: number; method: "main-page" | "iframe" | "none" }> {
+  hints: Partial<Record<string, string[]>> = {},
+): Promise<CardFillResult> {
   // 1. Try main-page CSS selectors first
   // Helper: fill with a short timeout to avoid hanging
   async function fillWithTimeout(locator: ReturnType<typeof page.locator>, value: string, ms = 1500): Promise<boolean> {
@@ -335,15 +369,28 @@ export async function scriptedFillCardFields(
     }
   }
 
+  const matched: { field: string; selector: string }[] = [];
+  // x_card_number → card_number, x_cardholder_name → cardholder_name, etc.
+  const labelFor = (credKey: string): string => credKey.replace(/^x_/, "");
+
   let mainPageFilled = 0;
   for (const { selector, credKey } of CARD_FIELD_MAP) {
     const value = cdpCreds[credKey];
     if (!value) continue;
-    try {
-      const el = page.locator(selector).first();
-      if (await fillWithTimeout(el, value)) mainPageFilled++;
-    } catch {
-      // Field not found on main page
+    const label = labelFor(credKey);
+    // Known selectors from a prior run are tried first (read-back).
+    const candidates = [...(hints[label] ?? []), selector];
+    for (const sel of candidates) {
+      try {
+        const el = page.locator(sel).first();
+        if (await fillWithTimeout(el, value)) {
+          mainPageFilled++;
+          matched.push({ field: label, selector: sel });
+          break;
+        }
+      } catch {
+        // Field not found on main page
+      }
     }
   }
 
@@ -361,6 +408,7 @@ export async function scriptedFillCardFields(
       const el = page.locator(sel).first();
       if (await fillWithTimeout(el, month)) {
         filledSplit = true;
+        matched.push({ field: "card_exp_month", selector: sel });
         break;
       }
     }
@@ -369,6 +417,7 @@ export async function scriptedFillCardFields(
         const el = page.locator(sel).first();
         if (await fillWithTimeout(el, fullYear) || await fillWithTimeout(el, year)) {
           mainPageFilled += 2; // month + year
+          matched.push({ field: "card_exp_year", selector: sel });
           break;
         }
       }
@@ -377,21 +426,22 @@ export async function scriptedFillCardFields(
 
   // Need at least 2 fields (card number + one more) to count as main-page success
   if (mainPageFilled >= 2) {
-    return { filled: mainPageFilled, method: "main-page" };
+    return { filled: mainPageFilled, method: "main-page", matched };
   }
 
   // 3. Iframe fallback — try even if 1 main-page field was found (likely a false positive)
   const iframeResult = await scanIframesForCardFields(page, cdpCreds);
   if (iframeResult.filled > 0) {
-    return { filled: iframeResult.filled + mainPageFilled, method: "iframe" };
+    // Iframe selectors live cross-origin; record only the main-page matches.
+    return { filled: iframeResult.filled + mainPageFilled, method: "iframe", matched };
   }
 
   // If main page got at least 1, report that
   if (mainPageFilled > 0) {
-    return { filled: mainPageFilled, method: "main-page" };
+    return { filled: mainPageFilled, method: "main-page", matched };
   }
 
-  return { filled: 0, method: "none" };
+  return { filled: 0, method: "none", matched };
 }
 
 // ---- Scripted billing fill ----
@@ -502,11 +552,20 @@ export async function scriptedUncheckBillingSameAsShipping(page: Page): Promise<
 
 // ---- Scripted button click ----
 
+/** Reported when a scripted click/select matches, for the skill recorder. */
+export interface ClickMatch {
+  /** A stable CSS descriptor for the clicked element, or undefined if none. */
+  selector?: string;
+  /** A short text snippet from the element (read-back fallback). */
+  text: string;
+}
+
 export async function scriptedClickButton(
   page: Page,
   target: string,
+  sink?: (m: ClickMatch) => void,
 ): Promise<boolean> {
-  const clicked = await page.evaluate((t) => {
+  const result = await page.evaluate((t) => {
     const lower = t.toLowerCase();
     // Try multiple text fragments separated by /
     const alternatives = lower.split("/").map(s => s.trim());
@@ -522,6 +581,16 @@ export async function scriptedClickButton(
         pos = idx + word.length;
       }
       return true;
+    }
+
+    // Build a stable CSS descriptor for the matched element (no value data).
+    function describe(el: Element): string | undefined {
+      const testId = el.getAttribute("data-testid");
+      if (testId) return `[data-testid="${testId}"]`;
+      if ((el as HTMLElement).id) return `#${(el as HTMLElement).id}`;
+      const name = el.getAttribute("name");
+      if (name) return `${el.tagName.toLowerCase()}[name="${name}"]`;
+      return undefined;
     }
 
     const candidates = document.querySelectorAll(
@@ -557,28 +626,53 @@ export async function scriptedClickButton(
       );
       if (!match) continue;
 
+      const selector = describe(el);
+      const snippet = (el.textContent || "").trim().slice(0, 40);
+
       // Check for inline onclick handler
       const onclick = el.getAttribute("onclick");
       if (onclick) {
         try {
           new Function(onclick).call(el);
-          return true;
+          return { clicked: true, selector, text: snippet };
         } catch {
           // Fall through to regular click
         }
       }
       htmlEl.click();
-      return true;
+      return { clicked: true, selector, text: snippet };
     }
-    return false;
+    return { clicked: false, selector: undefined as string | undefined, text: "" };
   }, target);
 
-  if (clicked) {
+  if (result.clicked) {
+    if (sink) sink({ selector: result.selector, text: result.text || target });
     try {
       await page.waitForTimeout(3000);
     } catch {
       // Page may have navigated
     }
+  }
+  return result.clicked;
+}
+
+/**
+ * Click an element by an exact CSS selector (read-back accelerator). Returns
+ * false if the selector is absent or the click throws.
+ */
+export async function scriptedClickSelector(page: Page, selector: string): Promise<boolean> {
+  let clicked = false;
+  try {
+    const el = page.locator(selector).first();
+    await Promise.race([
+      el.click({ timeout: 1500 }).then(() => { clicked = true; }),
+      new Promise<void>((resolve) => setTimeout(resolve, 1600)),
+    ]);
+  } catch {
+    clicked = false;
+  }
+  if (clicked) {
+    try { await page.waitForTimeout(3000); } catch { /* navigated */ }
   }
   return clicked;
 }
@@ -589,10 +683,22 @@ export async function scriptedSelectOption(
   page: Page,
   labelOrValue: string,
   type: "radio" | "checkbox" = "radio",
+  sink?: (m: ClickMatch) => void,
 ): Promise<boolean> {
-  return page.evaluate(
+  const result = await page.evaluate(
     ({ target, inputType }) => {
       const lower = target.toLowerCase();
+
+      // Stable CSS descriptor for the matched element (no value data).
+      function describe(el: Element): string | undefined {
+        if ((el as HTMLElement).id) return `#${(el as HTMLElement).id}`;
+        const name = el.getAttribute("name");
+        if (name) return `${el.tagName.toLowerCase()}[name="${name}"]`;
+        const role = el.getAttribute("role");
+        if (role) return `[role="${role}"]`;
+        return undefined;
+      }
+      const snippet = (el: Element) => (el.textContent || "").trim().slice(0, 40);
 
       // 1. Native input[type="radio"] or input[type="checkbox"]
       const inputs = document.querySelectorAll<HTMLInputElement>(`input[type="${inputType}"]`);
@@ -608,7 +714,7 @@ export async function scriptedSelectOption(
             parentText.includes(lower) || ariaLabel.includes(lower)) {
           input.click();
           input.dispatchEvent(new Event("change", { bubbles: true }));
-          return true;
+          return { selected: true, selector: describe(input), text: snippet(input) };
         }
       }
 
@@ -621,7 +727,7 @@ export async function scriptedSelectOption(
         const label = el.getAttribute("aria-label")?.toLowerCase() || "";
         if (text.includes(lower) || val.includes(lower) || label.includes(lower)) {
           (el as HTMLElement).click();
-          return true;
+          return { selected: true, selector: describe(el), text: snippet(el) };
         }
       }
 
@@ -633,14 +739,17 @@ export async function scriptedSelectOption(
         const text = (el.textContent || "").trim().toLowerCase();
         if (text === lower || text.includes(lower)) {
           (el as HTMLElement).click();
-          return true;
+          return { selected: true, selector: describe(el), text: snippet(el) };
         }
       }
 
-      return false;
+      return { selected: false, selector: undefined as string | undefined, text: "" };
     },
     { target: labelOrValue, inputType: type },
   );
+
+  if (result.selected && sink) sink({ selector: result.selector, text: result.text || labelOrValue });
+  return result.selected;
 }
 
 // ---- Page type detection ----

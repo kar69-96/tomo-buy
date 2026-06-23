@@ -59,6 +59,14 @@ export {
 } from "./session.js";
 export type { BrowserSession, BrowserbaseSession, SessionOptions } from "./session.js";
 
+// ---- Browserbase runtime (production-recommended; stubbed until wired) ----
+export {
+  createBrowserbaseSession,
+  releaseBrowserbaseSession,
+  buildSessionRequest,
+  replayUrlFor,
+} from "./browserbase-session.js";
+
 // ---- Agentcard funding ----
 export {
   issueCard,
@@ -76,7 +84,7 @@ export type { AgentcardPreflight } from "./agentcard.js";
 export { playwrightAct } from "./act.js";
 export type { ActOptions } from "./act.js";
 
-// ---- LLM (OpenRouter) ----
+// ---- LLM (OpenRouter default; Gemini when LLM_PROVIDER=gemini) ----
 export {
   complete,
   completePrompt,
@@ -86,6 +94,14 @@ export {
   getExtractModel,
 } from "./llm.js";
 export type { ChatMessage, CompleteOptions } from "./llm.js";
+
+// ---- Gemini in-checkout agent (production-recommended; stubbed until wired) ----
+export {
+  geminiComplete,
+  buildGeminiRequest,
+  parseGeminiResponse,
+} from "./gemini.js";
+export type { GeminiRequest } from "./gemini.js";
 
 // ---- Domain cache ----
 export {
@@ -114,6 +130,7 @@ export {
   scriptedFillBilling,
   scriptedUncheckBillingSameAsShipping,
   scriptedClickButton,
+  scriptedClickSelector,
   scriptedSelectOption,
   scriptedFillVerificationCode,
   detectPageType,
@@ -121,7 +138,39 @@ export {
   extractVisibleTotal,
   extractErrorMessage,
 } from "./scripted-actions.js";
-export type { PageType, ConfirmationData, ErrorData, ErrorType } from "./scripted-actions.js";
+export type {
+  PageType,
+  ConfirmationData,
+  ErrorData,
+  ErrorType,
+  ShippingFillResult,
+  CardFillResult,
+  ClickMatch,
+} from "./scripted-actions.js";
+
+// ---- Per-site checkout skills (write + read-back) ----
+export { SkillRecorder, dedupeSelectors, dedupeFlow } from "./skill-recorder.js";
+export {
+  loadSiteSkill,
+  writeSiteSkill,
+  mergeSiteSkill,
+  buildSelectorHints,
+  SelectorHints,
+  findSkillRoot,
+  sanitizeDomainForPath,
+} from "./site-skill.js";
+export { renderSkillMarkdown } from "./skill-renderer.js";
+export { narrateLearnings, buildNarrationFacts } from "./skill-narrator.js";
+export type { NarrationFacts } from "./skill-narrator.js";
+export type {
+  SiteSkillRecord,
+  RecordedSelector,
+  FieldProvenance,
+  SkillActionKind,
+  SkillMode,
+  PageFlowEntry,
+} from "./skill-types.js";
+export { SITE_SKILL_SCHEMA, SKILL_DIR_NAME } from "./skill-types.js";
 
 
 // ---- Login-gate execution (identity-driven) ----

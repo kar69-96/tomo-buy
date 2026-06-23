@@ -39,3 +39,6 @@ coverage/
 
 # Live E2E trace artifacts (screenshots + JSONL)
 traces/
+
+# Per-site checkout skills are COMMITTED; ignore only atomic-write temp files.
+site-skills/**/*.tmp
