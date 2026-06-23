@@ -26,10 +26,15 @@
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
-    "@tomo/core": "workspace:*"
+    "@tomo/core": "workspace:*",
+    "@tomo/orchestrator": "workspace:*",
+    "@temporalio/client": "^1.18.1",
+    "@temporalio/worker": "^1.18.1"
   },
   "devDependencies": {
+    "@temporalio/testing": "^1.18.1",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
