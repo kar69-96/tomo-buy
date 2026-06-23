@@ -1,52 +1,16 @@
 {
   "name": "@tomo/orchestrator",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Temporal approval/recon/orphan state machine — STUB; implemented in phase-04.",
+  "version": "0.1.0",
   "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    },
-    "./workflow": {
-      "types": "./dist/workflow.d.ts",
-      "import": "./dist/workflow.js",
-      "require": "./dist/workflow.cjs"
-    }
-  },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "dev": "tsup --watch",
-    "clean": "rm -rf dist coverage"
+    "build": "tsc"
   },
   "dependencies": {
     "@tomo/core": "workspace:*",
-    "@temporalio/activity": "^1.18.1",
-    "@temporalio/common": "^1.18.1",
-    "@temporalio/workflow": "^1.18.1"
-  },
-  "devDependencies": {
-    "@temporalio/client": "^1.18.1",
-    "@temporalio/testing": "^1.18.1",
-    "@temporalio/worker": "^1.18.1",
-    "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^3.0.0",
-    "tsup": "^8.3.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
-  },
-  "engines": {
-    "node": ">=20"
+    "@tomo/checkout": "workspace:*",
+    "@tomo/checkout-http": "workspace:*",
+    "@tomo/crawling": "workspace:*"
   }
 }

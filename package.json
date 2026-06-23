@@ -1,25 +1,24 @@
 {
-  "name": "tomo-buy",
+  "name": "tomo",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Tomo-buy — agentic checkout router. The LLM emits intent only; a trusted-side Executor is the only thing that opens secrets.",
   "scripts": {
-    "build": "turbo run build",
-    "test": "turbo run test",
-    "typecheck": "turbo run typecheck",
-    "lint": "turbo run lint",
-    "dev": "turbo run dev",
-    "clean": "turbo run clean"
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node --env-file=.env packages/api/dist/index.js",
+    "dev": "pnpm build && pnpm start"
   },
   "devDependencies": {
-    "turbo": "^2.4.0",
-    "typescript": "^5.7.0"
-  },
-  "packageManager": "pnpm@10.23.0",
-  "engines": {
-    "node": ">=20"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "@tomo/api": "workspace:*",
+    "@tomo/checkout": "workspace:*",
+    "@tomo/core": "workspace:*",
+    "@tomo/orchestrator": "workspace:*",
+    "@types/node": "^25.3.0",
+    "dotenv": "^16.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }

@@ -1,40 +1,13 @@
 {
   "name": "@tomo/core",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Frozen shared contracts for Tomo-buy: FundingRail, MachineRail, MerchantProfile, TaskIntent, RoutingDecision, vault interfaces, error hierarchy + Zod schemas.",
+  "version": "0.1.0",
   "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "dev": "tsup --watch",
-    "clean": "rm -rf dist coverage"
+    "build": "tsc"
   },
   "dependencies": {
-    "zod": "^4.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^3.0.0",
-    "tsup": "^8.3.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
-  },
-  "engines": {
-    "node": ">=20"
+    "dotenv": "^16.4.0"
   }
 }

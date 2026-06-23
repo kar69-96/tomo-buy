@@ -32,3 +32,13 @@ coverage/
 
 # Temporal local data
 .temporal/
+
+# Tomo/agentbuy local order store
+.tomo/
+.firecrawl.pid
+
+# Live E2E trace artifacts (screenshots + JSONL)
+traces/
+
+# Per-site checkout skills are COMMITTED; ignore only atomic-write temp files.
+site-skills/**/*.tmp
