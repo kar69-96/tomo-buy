@@ -48,3 +48,6 @@ site-skills/**/*.tmp
 
 # Transient scheduler lock
 .claude/scheduled_tasks.lock
+
+# Local handoff notes (not committed)
+handoff.md
