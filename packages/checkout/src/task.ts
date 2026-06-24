@@ -96,6 +96,8 @@ export interface CheckoutResult {
   durationMs?: number;
   /** True when a dry run reached the payment page and stopped before placing the order. */
   parkedAtPayment?: boolean;
+  /** True when a login-checkpoint run logged in and stopped before driving checkout. */
+  parkedAtLogin?: boolean;
 }
 
 export interface CheckoutInput {
@@ -119,6 +121,25 @@ export interface CheckoutInput {
    * parameters and ordered execution_steps drive the LLM loop instead. No secrets.
    */
   brief?: ExecutionBrief;
+  /**
+   * Login-checkpoint oversight: stop as soon as login has advanced, before
+   * driving cart/payment. Lets a test exercise the login gate in isolation.
+   * Generic — keys on the login executor's "advanced" signal, not any domain.
+   */
+  stopAfterLogin?: boolean;
+}
+
+/**
+ * Whether to park immediately after login. True only when a login-checkpoint run
+ * was requested AND the login executor actually advanced the form — so a run that
+ * never finds a login form falls through to the normal flow (and the payment park).
+ * Pure + exported for unit testing without a browser.
+ */
+export function shouldParkAfterLogin(
+  stopAfterLogin: boolean | undefined,
+  loginAdvanced: boolean,
+): boolean {
+  return stopAfterLogin === true && loginAdvanced === true;
 }
 
 /**
@@ -854,6 +875,44 @@ export async function runCheckout(
       confirmationData: undefined,
     };
 
+    // Login-checkpoint park: once login has advanced, snapshot + record + return
+    // without driving cart/payment. Mirrors the dry-run payment park, one stage
+    // earlier. Generic: triggered by the login executor's advance, not any site.
+    const parkAtLogin = async (
+      pageIdx: number,
+      pageType: PageType,
+      note: string,
+    ): Promise<CheckoutResult> => {
+      state.currentStep = "proceed-to-checkout";
+      console.log(`  [login-checkpoint] PARKED after login (${note})`);
+      tracer?.stepTracker.setStep("proceed-to-checkout");
+      const parkedShot = await tracer?.snapshot(page, "PARKED-login");
+      tracer?.record({
+        pageIndex: pageIdx,
+        url: page.url(),
+        pageType,
+        action: "parked-after-login",
+        mode: "login",
+        loginStrategy: input.loginPlan?.strategy,
+        advanced: true,
+        llmCalls: state.llmCalls,
+        screenshot: parkedShot,
+        note,
+        details: { parked_at: "login" },
+        outcome: "pass",
+      });
+      try {
+        saveDomainCache(await extractDomainCache(page, domain));
+      } catch { /* best-effort */ }
+      return {
+        success: true,
+        parkedAtLogin: true,
+        sessionId: session.id,
+        replayUrl: session.replayUrl,
+        durationMs: Date.now() - startMs,
+      };
+    };
+
     for (let pageIdx = 0; pageIdx < maxPages; pageIdx++) {
       state.pagesVisited = pageIdx;
 
@@ -905,6 +964,9 @@ export async function runCheckout(
             if (r.advanced) {
               state.loggedIn = true;
               console.log(`  [login] connected-account login: ${r.note ?? input.loginPlan?.strategy}`);
+              if (shouldParkAfterLogin(input.stopAfterLogin, r.advanced)) {
+                return parkAtLogin(pageIdx, "login-gate", r.note ?? "connected-account login");
+              }
             } else {
               console.log(`  [login] attempt ${state.loginAttempts} did not complete (${r.note ?? "no progress"}); continuing task`);
             }
@@ -1218,6 +1280,9 @@ export async function runCheckout(
             iterMode = "login";
             iterAction = `login:${loginResult.note ?? input.loginPlan?.strategy ?? "unknown"}`;
             advanced = loginResult.advanced;
+            if (shouldParkAfterLogin(input.stopAfterLogin, loginResult.advanced)) {
+              return parkAtLogin(pageIdx, pageType, loginResult.note ?? "login gate");
+            }
             break;
           }
           // Otherwise fall back to guest checkout (default behavior).

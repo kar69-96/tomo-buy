@@ -23,6 +23,30 @@ export const NEW_ACCOUNT_PRODUCT_URL =
 export const FRONTIER_URL =
   process.env.E2E_FRONTIER_URL ?? "https://www.flyfrontier.com";
 
+/**
+ * A major retailer where the user has an account (Amazon). Used for the
+ * personal-account login path (connected_otp / connected_session). Override with
+ * a current in-stock product URL via E2E_AMAZON_URL.
+ */
+export const AMAZON_PRODUCT_URL =
+  process.env.E2E_AMAZON_URL ?? "https://www.amazon.com/dp/B07FZ8S74R";
+
+/**
+ * A storefront that uses passwordless email-OTP login at checkout. The cleanest
+ * exercise of the connected_otp path (less bot defense than a big retailer).
+ * Override with a current product URL via E2E_OTP_SHOP_URL.
+ */
+export const OTP_SHOP_URL =
+  process.env.E2E_OTP_SHOP_URL ?? "https://www.thursdayboots.com/products/mens-captain-black";
+
+/**
+ * A second major retailer (Best Buy by default; point at Target/Walmart/etc via
+ * E2E_BIGBOX_URL). Exercises BOTH the user's connected account and a fresh agent
+ * account on a site other than the canary — proves the paths are site-agnostic.
+ */
+export const BIGBOX_PRODUCT_URL =
+  process.env.E2E_BIGBOX_URL ?? "https://www.bestbuy.com/site/apple-airtag/6588290.p";
+
 export const TASKS = {
   /** Guest: explicit "as a guest" makes the resolver pick the guest strategy. */
   guest: `Buy this item and check out as a guest: ${GUEST_PRODUCT_URL}`,
@@ -37,4 +61,26 @@ export const TASKS = {
   frontier:
     process.env.E2E_FRONTIER_TASK ??
     `Using my Frontier account, book a one-way Frontier flight from Denver (DEN) to Las Vegas (LAS) departing 2026-07-15 for one adult passenger at ${FRONTIER_URL}`,
+  /**
+   * Amazon, the user's own account. "my Amazon account" ties it to the user's
+   * records → connected-account login (OTP when Gmail is connected, else session).
+   */
+  amazonUser:
+    process.env.E2E_AMAZON_TASK ??
+    `Reorder this item on my Amazon account: ${AMAZON_PRODUCT_URL}`,
+  /**
+   * Generic OTP storefront: explicitly sign in to the user's account, which
+   * (with Gmail connected) routes to the email-OTP login path.
+   */
+  otpShop:
+    process.env.E2E_OTP_SHOP_TASK ??
+    `Log in to my account and buy this: ${OTP_SHOP_URL}`,
+  /** Big-box retailer on the user's own account → connected-account login. */
+  bigBoxUser:
+    process.env.E2E_BIGBOX_USER_TASK ??
+    `Buy this on my Best Buy account: ${BIGBOX_PRODUCT_URL}`,
+  /** Big-box retailer with a fresh agent identity → agent login + create_account. */
+  bigBoxAgent:
+    process.env.E2E_BIGBOX_AGENT_TASK ??
+    `Create an account and buy this item: ${BIGBOX_PRODUCT_URL}`,
 } as const;

@@ -51,17 +51,33 @@ export async function provisionInbox(localId: string): Promise<AgentInbox> {
   return { inboxId: inbox.inboxId, email: inboxIdToEmail(inbox.inboxId) };
 }
 
+// A code token: digit-led, 4–8 digits, with optional inner spaces/hyphens a sender
+// may insert ("482 913", "482-913"). Digit-led so a label connector word ("is")
+// can't be captured. Normalized (separators stripped) and length-checked below.
+const CODE_TOKEN = "([0-9](?:[0-9\\s-]{2,9})?[0-9])";
+
+// Labeled patterns win over a bare number so a surrounding order id / year / total
+// isn't mistaken for the code. An optional "is" connector follows the label.
 const CODE_PATTERNS = [
-  /verification code[:\s]*(\w{4,8})/i,
-  /\bcode[:\s]+(\w{4,8})\b/i,
-  /\b(?:one-time|otp|passcode)[:\s]*(\w{4,8})\b/i,
+  new RegExp(`(?:verification|security|access)\\s*code(?:\\s+is)?[:\\s#]*${CODE_TOKEN}`, "i"),
+  new RegExp(`\\b(?:one[-\\s]?time(?:\\s+(?:code|passcode|password))?|otp|passcode|pin)\\b(?:\\s+is)?[:\\s#]*${CODE_TOKEN}`, "i"),
+  new RegExp(`\\bcode(?:\\s+is)?[:\\s#]+${CODE_TOKEN}`, "i"),
+  // Bare fallback: a standalone 4–8 digit run.
   /\b(\d{4,8})\b/,
 ];
+
+/** Strip the spaces/hyphens a sender may put inside a code ("482 913" → "482913"). */
+function normalizeCode(raw: string): string {
+  return raw.replace(/[\s-]/g, "");
+}
 
 export function extractCode(text: string): string | null {
   for (const pattern of CODE_PATTERNS) {
     const match = text.match(pattern);
-    if (match?.[1]) return match[1];
+    if (match?.[1]) {
+      const code = normalizeCode(match[1]);
+      if (/^\d{4,8}$/.test(code)) return code;
+    }
   }
   return null;
 }

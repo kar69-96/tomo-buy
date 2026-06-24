@@ -195,7 +195,7 @@ async function loginWithOtp(
 /** Read a one-time code from the user's connected email via Composio. */
 async function readConnectedOtp(
   plan: LoginPlan,
-  _since: string,
+  since: string,
 ): Promise<string | null> {
   const composio = getComposioClient();
   if (!(await composio.isConnected())) return null;
@@ -206,7 +206,15 @@ async function readConnectedOtp(
       newerThanDays: 1,
       limit: 5,
     });
-    for (const hit of hits) {
+    // Only trust a code from a message that arrived AFTER we submitted the email —
+    // never replay a stale code from a prior login. A hit with no parseable
+    // timestamp is kept (we can't prove it's old).
+    const sinceMs = Date.parse(since);
+    const fresh = hits.filter((h) => {
+      const t = Date.parse(h.received_at);
+      return Number.isNaN(t) || Number.isNaN(sinceMs) || t >= sinceMs;
+    });
+    for (const hit of fresh) {
       const msg = await composio.getMessage(hit.id);
       const code = extractCode(`${hit.subject} ${msg?.body ?? hit.snippet}`);
       if (code) return code;

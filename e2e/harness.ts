@@ -12,16 +12,46 @@ import { startRun, resumeRun } from "@tomo/planner";
 import type { RunOutcome, Approval } from "@tomo/planner";
 import { getRun } from "@tomo/core";
 import type { RunGate, GateType, LoginStrategy } from "@tomo/core";
+import { setComposioClient } from "@tomo/identity";
+import type { ComposioClient } from "@tomo/identity";
+
+/** Options for a scenario's environment. */
+export interface ScenarioEnvOptions {
+  /**
+   * Login-checkpoint mode: stop the run as soon as login advances (parked at
+   * "login"), before driving cart/payment. Use for login-gate-only scenarios.
+   */
+  loginCheckpoint?: boolean;
+}
 
 /** Per-scenario environment: headful Chrome, no-spend, dedicated trace dir. */
-export function setupScenarioEnv(scenario: string): string {
+export function setupScenarioEnv(scenario: string, opts: ScenarioEnvOptions = {}): string {
   const dir = join(process.cwd(), "traces", `${scenario}-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
   process.env.DRY_RUN_NO_SPEND = "1";
   process.env.CHECKOUT_TRACE_DIR = dir;
+  if (opts.loginCheckpoint) process.env.LOGIN_CHECKPOINT = "1";
+  else delete process.env.LOGIN_CHECKPOINT;
   // Default to a visible window unless the caller pinned HEADLESS explicitly.
   if (process.env.HEADLESS === undefined) process.env.HEADLESS = "false";
   return dir;
+}
+
+/**
+ * Run `fn` with a fake Composio client injected (deterministic OTP / account
+ * evidence without a live mailbox), restoring the real client afterward. Thin
+ * wrapper over the existing setComposioClient override.
+ */
+export async function withFakeComposio<T>(
+  client: ComposioClient,
+  fn: () => Promise<T>,
+): Promise<T> {
+  setComposioClient(client);
+  try {
+    return await fn();
+  } finally {
+    setComposioClient(null);
+  }
 }
 
 export interface DriveResult {

@@ -47,6 +47,12 @@ export interface ConfirmInput {
    */
   stopBeforePlaceOrder?: boolean;
   /**
+   * Login-checkpoint oversight: stop as soon as login has advanced, before driving
+   * cart/payment. Exercises the login gate in isolation. Implies no spend (no card
+   * is issued and the run never reaches payment).
+   */
+  stopAfterLogin?: boolean;
+  /**
    * High-detail execution brief from the planner. Carries the objective, grounded
    * parameters and ordered execution steps that guide the checkout LLM loop through
    * multi-step task flows the scripted product handlers don't model. No secrets.
@@ -56,10 +62,13 @@ export interface ConfirmInput {
 
 export interface ConfirmResult {
   order: Order;
-  /** Present on a completed purchase. Absent when parked (stopBeforePlaceOrder). */
+  /** Present on a completed purchase. Absent when parked. */
   receipt?: Receipt;
-  /** Present when the run parked at the payment page without spending. */
-  parked?: { at: "payment"; observed_total?: string; session_id: string };
+  /**
+   * Present when the run parked without spending: at the payment page
+   * (stopBeforePlaceOrder) or right after login (stopAfterLogin).
+   */
+  parked?: { at: "payment" | "login"; observed_total?: string; session_id: string };
 }
 
 export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
@@ -117,7 +126,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
     //     A no-spend oversight run (stopBeforePlaceOrder) NEVER issues a card —
     //     this is the load-bearing guarantee that the run cannot spend money.
     let card: CardInfo | undefined;
-    if (!input.stopBeforePlaceOrder && getFundingMode() === "agentcard") {
+    if (!input.stopBeforePlaceOrder && !input.stopAfterLogin && getFundingMode() === "agentcard") {
       const amount = fundingAmountDollars(order);
       const issued = await issueAndRevealCard(amount);
       card = issued.card;
@@ -129,6 +138,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
     // opted into AND funding is static (debugging).
     const useHttp =
       !input.stopBeforePlaceOrder &&
+      !input.stopAfterLogin &&
       process.env.CHECKOUT_ENGINE === "http" &&
       getFundingMode() === "static" &&
       selectEngine(domain) === "http";
@@ -160,6 +170,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
           card,
           loginPlan,
           dryRun: input.stopBeforePlaceOrder,
+          stopAfterLogin: input.stopAfterLogin,
           brief: input.brief,
         });
       }
@@ -171,6 +182,7 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
         card,
         loginPlan,
         dryRun: input.stopBeforePlaceOrder,
+        stopAfterLogin: input.stopAfterLogin,
         brief: input.brief,
       });
     }
@@ -185,7 +197,18 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
       );
     }
 
-    // 6c. No-spend oversight run: parked at the payment page. No card was issued
+    // 6c. Login-checkpoint oversight run: parked right after login, before cart/
+    //     payment. No card was issued and no order placed. Revert to
+    //     awaiting_confirmation (still confirmable for real later).
+    if (checkoutResult.parkedAtLogin) {
+      await updateOrder(order_id, { status: "awaiting_confirmation" });
+      return {
+        order,
+        parked: { at: "login", session_id: checkoutResult.sessionId },
+      };
+    }
+
+    // 6d. No-spend oversight run: parked at the payment page. No card was issued
     //     and no order placed. Revert the order to awaiting_confirmation (so it
     //     can still be confirmed for real later) and return the observed total.
     if (input.stopBeforePlaceOrder) {

@@ -57,6 +57,9 @@ const CASES: Case[] = [
   { name: "view my orders", task: "show me my recent Amazon orders and reorder the coffee", domain: "amazon.com", want: "connected" },
   { name: "change my booking", task: "change the seat on my existing United booking", domain: "united.com", want: "connected" },
   { name: "loyalty account", task: "redeem the stars in my Starbucks rewards account", domain: "starbucks.com", want: "connected" },
+  { name: "my Best Buy account", task: "buy this on my Best Buy account", domain: "bestbuy.com", want: "connected" },
+  { name: "my Target orders", task: "reorder the paper towels from my Target account", domain: "target.com", want: "connected" },
+  { name: "explicit account login", task: "log in to my account and buy these boots", domain: "thursdayboots.com", want: "connected" },
 
   // Explicit guest checkout — no login, no account (short-circuits before the LLM).
   { name: "as a guest", task: "buy this item and check out as a guest", domain: "shop.example", want: "guest" },

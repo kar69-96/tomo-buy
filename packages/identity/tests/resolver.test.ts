@@ -110,6 +110,7 @@ describe("resolveStrategy", () => {
         },
       ],
       getMessage: async () => null,
+      getProfileEmail: async () => "user@example.com",
     };
     setComposioClient(fake);
     vi.mocked(completeJson).mockResolvedValue({

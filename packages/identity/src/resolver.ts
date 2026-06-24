@@ -139,6 +139,23 @@ export async function resolveStrategy(
   return resolveAgent(domain, input.task);
 }
 
+/**
+ * The email to type into the login form for a connected-account login: prefer a
+ * per-service account the user registered locally, else fall back to the
+ * connected mailbox's own address (so an OTP login can fill the email field).
+ */
+async function connectedEmail(domain: string): Promise<string> {
+  const account = getConnectedAccounts().find(
+    (a) => a.status === "connected" && (a.domains?.includes(domain) ?? true),
+  );
+  if (account?.email) return account.email;
+  try {
+    return (await getComposioClient().getProfileEmail()) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 async function decide(
   input: ResolverInput,
   domain: string,
@@ -164,15 +181,12 @@ async function decide(
   return { needs_user_account: false, reason: "resolver fallback; default agent" };
 }
 
-function resolveConnected(
+async function resolveConnected(
   domain: string,
   decision: LlmDecision,
   emailConnected: boolean,
-): ResolvedLogin {
-  const account = getConnectedAccounts().find(
-    (a) => a.status === "connected" && (a.domains?.includes(domain) ?? true),
-  );
-  const email = account?.email ?? "";
+): Promise<ResolvedLogin> {
+  const email = await connectedEmail(domain);
 
   // OTP is only viable when the user's email is actually connected.
   if (emailConnected && decision.preferred_method === "otp") {

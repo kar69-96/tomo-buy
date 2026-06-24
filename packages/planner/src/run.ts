@@ -21,6 +21,7 @@ import {
   updateRun,
   getAgentcardBufferPct,
   getAgentcardMaxAmount,
+  getStopAfterLogin,
   isFormFlowBrief,
 } from "@tomo/core";
 import { query, searchQuery, buy, confirm } from "@tomo/orchestrator";
@@ -352,6 +353,7 @@ async function stepPurchase(
       order_id: ctx.purchase.order_id,
       loginPlan,
       stopBeforePlaceOrder,
+      stopAfterLogin: getStopAfterLogin(),
       brief,
     });
     if (result.parked) {

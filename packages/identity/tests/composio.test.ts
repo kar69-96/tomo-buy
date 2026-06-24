@@ -75,6 +75,7 @@ describe("StubComposioClient", () => {
         subject: hit.subject,
         body: "code 482913",
       }),
+      getProfileEmail: async () => "user@gmail.com",
     };
     setComposioClient(fake);
     const c = getComposioClient();

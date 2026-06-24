@@ -51,9 +51,23 @@ export function getVaultKey(): string | null {
   return process.env.VAULT_KEY || null;
 }
 
-/** Composio API key (optional; the client is stubbed until wired). */
+/**
+ * Composio API key (optional). When set, the real Gmail client is used to read
+ * the user's connected inbox (existing-account evidence + one-time codes); when
+ * unset, the stub returns nothing and the resolver defaults to an agent identity.
+ */
 export function getComposioKey(): string | null {
   return process.env.COMPOSIO_API_KEY || null;
+}
+
+/**
+ * No-spend oversight checkpoint: stop the checkout loop as soon as login has
+ * advanced, before driving cart/payment. Used to exercise (and assert) the login
+ * gate in isolation. Generic across sites — keys on the login executor's
+ * "advanced" signal, never on a domain. Implies a no-spend run.
+ */
+export function getStopAfterLogin(): boolean {
+  return process.env.LOGIN_CHECKPOINT === "1";
 }
 
 // ---- Browser runtime ----
@@ -104,9 +118,13 @@ export function getGeminiKey(): string | null {
   return process.env.GEMINI_API_KEY || null;
 }
 
-/** Model id for the Gemini in-checkout agent. */
+/**
+ * Model id for the native Gemini in-checkout agent. Defaults to 2.5 Flash-Lite —
+ * vision-capable and cheaper than gpt-4o-mini. (The old gemini-2.0-flash default
+ * was retired by Google on 2026-06-01.)
+ */
 export function getGeminiModel(): string {
-  return process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  return process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 }
 
 /** Model for the planning agent; defaults to the discovery/intent model. */

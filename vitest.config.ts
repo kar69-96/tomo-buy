@@ -6,6 +6,9 @@ import { resolve } from "node:path";
 // isn't hoisted to the root node_modules. Alias it to its built entry so the
 // (otherwise self-skipping) e2e specs can be collected. Requires `pnpm build`.
 const tomoPlanner = resolve(process.cwd(), "packages/planner/dist/index.js");
+// The harness also injects a fake Composio client via @tomo/identity; alias it
+// to its built entry for the same reason (e2e/ is outside the workspace).
+const tomoIdentity = resolve(process.cwd(), "packages/identity/dist/index.js");
 
 // Load .env into process.env before tests evaluate
 try {
@@ -27,6 +30,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@tomo/planner": tomoPlanner,
+      "@tomo/identity": tomoIdentity,
     },
   },
   test: {
