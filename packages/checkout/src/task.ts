@@ -257,9 +257,10 @@ function buildPurchaseObjective(input: CheckoutInput): string {
   lines.push(QTY_GUIDANCE);
   // Account vs guest.
   if (input.loginPlan?.register) {
-    // create_account was approved: register a fresh agent account on this site.
+    // create_account was approved, but guest checkout is preferred when offered:
+    // only register if the site won't let us proceed as a guest.
     lines.push(
-      'ACCOUNT: create a NEW account on this site for this purchase. Find the "Create account"/"Sign up"/"Register" link (often under an Account or Login menu), open that form, then call the login tool — it registers the account with your email and a new password for you (you never type them). After the account is created, continue to buy the item.',
+      'ACCOUNT: a new agent account is available for this site if it is needed. Prefer GUEST checkout whenever it is offered. ONLY if the site refuses to let you check out as a guest (it requires an account) should you open the "Create account"/"Sign up" form and call the login tool — it registers you with your email and a new password (you never type them). Never let account creation block an otherwise-available guest checkout.',
     );
   } else if (wantsProactiveLogin(input.loginPlan)) {
     lines.push(
