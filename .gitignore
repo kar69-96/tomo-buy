@@ -51,3 +51,7 @@ site-skills/**/*.tmp
 
 # Local handoff notes (not committed)
 handoff.md
+
+# Throwaway browser-probe scratch scripts and screenshots
+packages/checkout/_*.mjs
+packages/checkout/_*.png

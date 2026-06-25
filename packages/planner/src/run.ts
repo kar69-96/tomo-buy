@@ -189,10 +189,17 @@ async function applyApproval(
 
 async function advance(run: Run): Promise<RunOutcome> {
   const plan = run.plan!;
-  const brief = plan.brief;
+  const brief = plan?.brief;
   const ctx = readContext(run);
   let cursor = run.cursor;
 
+  // A run enters advance() in "running". It MUST leave with a terminal status
+  // (completed / failed) or a valid non-terminal pause (awaiting_approval) — a
+  // run must NEVER remain "running" once this call returns or throws. We track
+  // whether a terminal/pause status was persisted; the finally block forces a
+  // "failed" write for any escape (thrown error, browser crash, early return)
+  // that slipped past without one, so the run can never be stuck "running".
+  let settled = false;
   try {
     while (cursor < plan.steps.length) {
       const step = plan.steps[cursor]!;
@@ -205,26 +212,46 @@ async function advance(run: Run): Promise<RunOutcome> {
           context: ctx,
           updated_at: nowIso(),
         });
+        settled = true; // awaiting_approval is a valid non-terminal pause
         return { run_id: run.run_id, status: "awaiting_approval", gate, brief };
       }
       cursor += 1;
     }
+
+    const result = { ...ctx.discovery, receipt: ctx.receipt, parked: ctx.purchase?.parked };
+    await updateRun(run.run_id, {
+      status: "completed",
+      cursor,
+      context: ctx,
+      result,
+      updated_at: nowIso(),
+    });
+    settled = true;
+    return { run_id: run.run_id, status: "completed", result, brief };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const error = { code: "PLAN_FAILED", message };
     await updateRun(run.run_id, { status: "failed", error, context: ctx, updated_at: nowIso() });
+    settled = true;
     return { run_id: run.run_id, status: "failed", brief, error };
+  } finally {
+    // Last-resort guard: if neither the success path, the pause, nor the catch
+    // managed to persist a terminal/pause status (e.g. updateRun itself threw,
+    // or a non-Error escaped the loop), the run would be stranded "running".
+    // Force a terminal "failed" write so the lifecycle invariant always holds.
+    if (!settled) {
+      try {
+        await updateRun(run.run_id, {
+          status: "failed",
+          error: { code: "PLAN_ABORTED", message: "Run aborted before reaching a terminal status" },
+          context: ctx,
+          updated_at: nowIso(),
+        });
+      } catch {
+        // Nothing more we can safely do here; do not mask the original failure.
+      }
+    }
   }
-
-  const result = { ...ctx.discovery, receipt: ctx.receipt, parked: ctx.purchase?.parked };
-  await updateRun(run.run_id, {
-    status: "completed",
-    cursor,
-    context: ctx,
-    result,
-    updated_at: nowIso(),
-  });
-  return { run_id: run.run_id, status: "completed", result, brief };
 }
 
 /** Execute one step. Returns a gate to pause on, or undefined to continue. */
@@ -392,6 +419,37 @@ function buildBreakdown(payment: {
 }
 
 /**
+ * Turn a stored session secret into cookies. Accepts a JSON array of
+ * `{name,value,domain?,path?}` (a full captured session) or a bare token string
+ * (legacy single cookie). Entries without an explicit domain inherit the service
+ * domain. Generic; never logs the values.
+ */
+export function parseSessionCookies(
+  token: string,
+  domain: string,
+  cookieName?: string,
+): SessionCookie[] {
+  const trimmed = token.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed) as Array<Partial<SessionCookie>>;
+      const cookies = arr
+        .filter((c) => c && typeof c.name === "string" && typeof c.value === "string")
+        .map((c) => ({
+          name: c.name as string,
+          value: c.value as string,
+          domain: c.domain ?? domain,
+          path: c.path ?? "/",
+        }));
+      if (cookies.length > 0) return cookies;
+    } catch {
+      // Not valid JSON — fall through to the single-cookie form.
+    }
+  }
+  return [{ name: cookieName ?? "session", value: token, domain }];
+}
+
+/**
  * Build the ephemeral LoginPlan from the resolved strategy, fetching secrets
  * from the vault at the last possible moment. Returns undefined for guest/none.
  */
@@ -416,9 +474,11 @@ async function buildLoginPlan(ctx: RunContext): Promise<LoginPlan | undefined> {
 
   if (login.strategy === "connected_session" && login.session_token_ref) {
     const token = getSecret(login.session_token_ref); // ephemeral
-    const cookies: SessionCookie[] = [
-      { name: login.cookie_name ?? "session", value: token, domain },
-    ];
+    // The stored secret is either a JSON array of full cookies (preferred — a real
+    // logged-in session usually spans several cookies) or a bare token string (the
+    // legacy single-cookie form). Parse the richer shape when present; fall back to
+    // one cookie otherwise. Generic; no per-site logic.
+    const cookies = parseSessionCookies(token, domain, login.cookie_name);
     return { strategy: "connected_session", email: login.email, sessionCookies: cookies, domain };
   }
 

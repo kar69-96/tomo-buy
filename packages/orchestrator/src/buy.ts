@@ -28,6 +28,38 @@ export interface BuyInput {
   allowUnpriced?: boolean;
 }
 
+/**
+ * Normalize a raw selections object into a clean, trimmed copy.
+ *
+ * A blank selection (empty/whitespace-only value) is not malformed — it just
+ * means "no choice for that option" — so it is silently dropped. Genuinely
+ * malformed input (a non-string key or value) throws INVALID_SELECTION.
+ *
+ * Returns a NEW object; never mutates the input.
+ */
+export function normalizeSelections(
+  selections: Record<string, string> | undefined,
+): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  if (!selections) return normalized;
+
+  for (const [key, value] of Object.entries(selections)) {
+    if (typeof key !== "string" || typeof value !== "string") {
+      throw new TomoError(
+        ErrorCodes.INVALID_SELECTION,
+        "Selections must have string keys and values",
+      );
+    }
+    const trimmedKey = key.trim();
+    const trimmedValue = value.trim();
+    // Blank key or value => "no choice for that option": skip, don't fail.
+    if (!trimmedKey || !trimmedValue) continue;
+    normalized[trimmedKey] = trimmedValue;
+  }
+
+  return normalized;
+}
+
 export async function buy(input: BuyInput): Promise<Order> {
   const { url } = input;
 
@@ -58,14 +90,9 @@ export async function buy(input: BuyInput): Promise<Order> {
     );
   }
 
-  // Validate selections if provided
-  if (input.selections) {
-    for (const [key, value] of Object.entries(input.selections)) {
-      if (typeof key !== 'string' || typeof value !== 'string' || !key.trim() || !value.trim()) {
-        throw new TomoError(ErrorCodes.INVALID_SELECTION, 'Selections must have non-empty string keys and values');
-      }
-    }
-  }
+  // Normalize selections: drop blank (no-choice) options, keep trimmed pairs,
+  // and throw only on genuinely malformed (non-string) input.
+  const selections = normalizeSelections(input.selections);
 
   // 3. Discover price. When allowUnpriced is set, a failed discovery is expected
   //    (no product-page price to quote) — degrade to a price-unknown order so the
@@ -125,7 +152,7 @@ export async function buy(input: BuyInput): Promise<Order> {
       fee_rate: "2%",
     },
     shipping: resolvedShipping,
-    selections: input.selections,
+    selections,
     created_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
   };

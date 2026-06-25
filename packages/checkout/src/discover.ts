@@ -2,15 +2,125 @@ import type { Page } from "playwright";
 import {
   type ShippingInfo,
   type ProductOption,
+  TomoError,
+  ErrorCodes,
 } from "@tomo/core";
-import {
-  discoverViaFirecrawl,
-  stripCurrencySymbol,
-  extractPriceFromString,
-} from "@tomo/crawling";
+import { discoverViaFirecrawl } from "@tomo/crawling";
 import type { FullDiscoveryResult } from "@tomo/crawling";
 import { createSession, destroySession } from "./session.js";
 import { completeJson } from "./llm.js";
+
+// ---- Price normalization ----
+//
+// Canonicalizes a raw extracted price string into a major-currency-unit dollar
+// string with exactly 2 decimals (e.g. "49.99"). The order/receipt model carries
+// dollar strings, so every price that leaves discovery MUST pass through here.
+//
+// ROOT-CAUSE NOTE (the "$49.99 stored as 4999" / 100x bug):
+//   The LLM extraction prompt previously said `price` should be "digits only,
+//   no currency symbol". The model obeyed literally and returned the price with
+//   its decimal point removed ("49.99" -> "4999"). Nothing downstream restored
+//   the point, so a $49.99 item was funded/quoted as $4999. The prompt is now
+//   fixed to demand a decimal price, and this normalizer is the structural guard:
+//   it treats schema.org / JSON-LD `price` (and any extracted price) as ALWAYS
+//   being in MAJOR units (dollars) — it never divides by 100 on its own. A raw
+//   value is only treated as integer cents when it arrives via an explicitly
+//   cents-typed field; callers signal that with `{ unit: "cents" }`.
+//
+// Separator rules (locale-agnostic, no per-site logic):
+//   - "$49.99"      -> "49.99"   (US/standard)
+//   - "49,99"       -> "49.99"   (EU decimal comma)
+//   - "1,234.56"    -> "1234.56" (US thousands comma + dot decimal)
+//   - "1.234,56"    -> "1234.56" (EU thousands dot + comma decimal)
+//   - "4999"        -> "4999.00" (no separators: an integer number of dollars)
+//
+// Rejects silent zeros: if a non-empty raw string normalizes to 0, that is an
+// extraction failure (returns null) rather than a misleading "0.00".
+
+export interface NormalizePriceOptions {
+  /** "dollars" (default) treats the value as major units; "cents" divides by 100. */
+  unit?: "dollars" | "cents";
+}
+
+/** Extract the numeric magnitude (as a JS number in dollars) from a raw price. */
+function parsePriceMagnitude(raw: string): number | null {
+  // Keep only digits and the two possible separators.
+  const cleaned = raw.replace(/[^\d.,]/g, "");
+  if (!cleaned) return null;
+
+  const hasDot = cleaned.includes(".");
+  const hasComma = cleaned.includes(",");
+
+  let normalized: string;
+  if (hasDot && hasComma) {
+    // Both present: the separator that appears LAST is the decimal separator;
+    // the other is the thousands separator and is stripped.
+    const lastDot = cleaned.lastIndexOf(".");
+    const lastComma = cleaned.lastIndexOf(",");
+    if (lastComma > lastDot) {
+      // EU style "1.234,56" -> dot=thousands, comma=decimal
+      normalized = cleaned.replace(/\./g, "").replace(",", ".");
+    } else {
+      // US style "1,234.56" -> comma=thousands, dot=decimal
+      normalized = cleaned.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    // Only commas. A single comma with 1-2 trailing digits is an EU decimal
+    // comma ("49,99"); otherwise commas are thousands separators ("1,234").
+    const m = /^(\d+),(\d{1,2})$/.exec(cleaned);
+    normalized = m ? `${m[1]}.${m[2]}` : cleaned.replace(/,/g, "");
+  } else {
+    // Only dots (or none). A single dot is a decimal point; multiple dots are
+    // thousands separators ("1.234.567" -> "1234567").
+    const dotCount = (cleaned.match(/\./g) ?? []).length;
+    normalized = dotCount > 1 ? cleaned.replace(/\./g, "") : cleaned;
+  }
+
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
+/**
+ * Canonicalize a raw price into a 2-decimal dollar string, or null if the input
+ * is empty / unparseable / normalizes to zero from non-empty input.
+ */
+export function normalizePrice(
+  raw: string | number | null | undefined,
+  options: NormalizePriceOptions = {},
+): string | null {
+  if (raw == null) return null;
+  const rawStr = String(raw).trim();
+  if (!rawStr) return null;
+
+  const magnitude = parsePriceMagnitude(rawStr);
+  if (magnitude == null) return null;
+
+  const dollars = options.unit === "cents" ? magnitude / 100 : magnitude;
+
+  // A non-empty raw string that resolves to 0 is an extraction failure, not a
+  // legitimate free item — avoid producing a silent "0.00".
+  if (!(dollars > 0)) return null;
+
+  return dollars.toFixed(2);
+}
+
+/**
+ * Like normalizePrice but throws PRICE_EXTRACTION_FAILED instead of returning
+ * null — for call sites that must produce a price or fail loudly.
+ */
+export function normalizePriceOrThrow(
+  raw: string | number | null | undefined,
+  options: NormalizePriceOptions = {},
+): string {
+  const normalized = normalizePrice(raw, options);
+  if (normalized == null) {
+    throw new TomoError(
+      ErrorCodes.PRICE_EXTRACTION_FAILED,
+      `Could not normalize extracted price: ${JSON.stringify(raw)}`,
+    );
+  }
+  return normalized;
+}
 
 // ---- Discovery result ----
 
@@ -127,7 +237,10 @@ export async function scrapePrice(
     }
 
     if (name && price) {
-      return { name, price, method: "scrape", image_url: image };
+      const normalized = normalizePrice(price);
+      if (normalized) {
+        return { name, price: normalized, method: "scrape", image_url: image };
+      }
     }
   }
 
@@ -139,7 +252,7 @@ export async function scrapePrice(
   const ogImage = extractMetaTag(html, "og:image") || undefined;
 
   if (ogTitle && ogPrice) {
-    const price = extractPriceFromString(ogPrice);
+    const price = normalizePrice(ogPrice);
     if (price) {
       return { name: ogTitle, price, method: "scrape", image_url: ogImage };
     }
@@ -189,8 +302,10 @@ interface ExtractedProduct {
 
 const PRODUCT_EXTRACT_SYSTEM =
   "You extract product data from an e-commerce product page. Return a JSON object: " +
-  '{"name": string, "price": string (digits only, no currency symbol), ' +
-  '"original_price"?: string, "currency"?: string, "brand"?: string, ' +
+  '{"name": string, "price": string (the price in major currency units, e.g. ' +
+  '"49.99" for forty-nine dollars and ninety-nine cents — KEEP the decimal point ' +
+  "and cents exactly as shown; do NOT strip the decimal point or convert to cents), " +
+  '"original_price"?: string (same format), "currency"?: string, "brand"?: string, ' +
   '"image_url"?: string, "options"?: [{"name": string, "values": string[]}]}. ' +
   "Extract the ONE-TIME (non-subscription) price. Return ONLY the JSON object.";
 
@@ -236,13 +351,18 @@ export async function discoverViaBrowser(
         if (typeof p === "string" || typeof p === "number") price = String(p);
       }
       if (name && price) {
-        return {
-          name,
-          price: stripCurrencySymbol(price),
-          image_url: image,
-          method: "browser",
-          options: [],
-        };
+        // schema.org `price` is always in major units (dollars); normalize and
+        // bail to the LLM tier rather than emit a bad/zero price.
+        const normalized = normalizePrice(price);
+        if (normalized) {
+          return {
+            name,
+            price: normalized,
+            image_url: image,
+            method: "browser",
+            options: [],
+          };
+        }
       }
     }
 
@@ -264,9 +384,15 @@ export async function discoverViaBrowser(
       return null;
     }
 
+    // Normalize the LLM-extracted price. If it can't be turned into a positive
+    // dollar amount (e.g. the model emitted garbage), treat discovery as failed
+    // rather than passing a zero/raw value downstream into a real card.
+    const price = normalizePrice(parsed.price);
+    if (!price) return null;
+
     return {
       name: parsed.name,
-      price: stripCurrencySymbol(parsed.price),
+      price,
       image_url:
         parsed.image_url && parsed.image_url !== "null"
           ? parsed.image_url
@@ -274,7 +400,7 @@ export async function discoverViaBrowser(
       method: "browser",
       options: mapExtractedOptions(parsed.options),
       original_price: parsed.original_price
-        ? stripCurrencySymbol(parsed.original_price)
+        ? normalizePrice(parsed.original_price) ?? undefined
         : undefined,
       currency: parsed.currency,
       brand: parsed.brand,
@@ -491,7 +617,16 @@ export async function scrapePriceWithOptions(
     }
 
     if (name && price) {
-      return { name, price, method: "scrape", image_url: image, options };
+      const normalized = normalizePrice(price);
+      if (normalized) {
+        return {
+          name,
+          price: normalized,
+          method: "scrape",
+          image_url: image,
+          options,
+        };
+      }
     }
   }
 
@@ -503,12 +638,11 @@ export async function scrapePriceWithOptions(
   const ogImage = extractMetaTag(html, "og:image") || undefined;
 
   if (ogTitle && ogPrice) {
-    const cleaned = ogPrice.trim().replace(/,/g, "");
-    const match = /[\d]+\.?\d*/.exec(cleaned);
-    if (match) {
+    const price = normalizePrice(ogPrice);
+    if (price) {
       return {
         name: ogTitle,
-        price: match[0],
+        price,
         method: "scrape",
         image_url: ogImage,
         options,

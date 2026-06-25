@@ -847,13 +847,32 @@ export async function detectPageType(page: Page): Promise<PageType> {
       );
       const addToCartText = ["add to cart", "add to bag", "add to basket", "buy now", "add it to your cart", "add item", "add to order", "ship it", "pick it up", "deliver it"];
       const hasAtcText = addToCartText.some(s => text.includes(s));
+      // Structured product signals — robust to storefront themes whose Add-to-Cart
+      // button is rendered via JS or sits behind a region/cookie/consent gate, so the
+      // selector/text checks above miss it (this is why some Shopify PDPs were seen as
+      // `unknown`). Virtually every e-commerce product page emits at least one of:
+      // JSON-LD @type:Product, og:type=product, or an itemprop/microdata price. Generic.
+      const hasStructuredProduct = (() => {
+        const og = document.querySelector('meta[property="og:type" i], meta[name="og:type" i]');
+        if (og && (og.getAttribute("content") || "").toLowerCase().includes("product")) return true;
+        if (document.querySelector(
+          '[itemtype*="schema.org/Product" i], [itemprop="price"], ' +
+          'meta[property="product:price:amount"], meta[itemprop="price"]'
+        )) return true;
+        for (const s of Array.from(document.querySelectorAll('script[type="application/ld+json"]'))) {
+          const t = s.textContent || "";
+          if (/"@type"\s*:\s*"Product"/i.test(t)) return true;
+          if (/"@type"\s*:\s*\[[^\]]*"Product"[^\]]*\]/i.test(t)) return true;
+        }
+        return false;
+      })();
       const isCheckoutUrl = url.includes("/checkout") || url.includes("/payment") ||
         url.includes("/billing");
 
       // Product page — check BEFORE payment to avoid misclassifying product pages
       // that have Shop Pay / express checkout card inputs.
-      // Product pages have ATC buttons and are NOT on checkout URLs.
-      if ((hasAddToCart || hasAtcText) && !isCheckoutUrl) {
+      // Product pages have ATC buttons / product structured-data and are NOT on checkout URLs.
+      if ((hasAddToCart || hasAtcText || hasStructuredProduct) && !isCheckoutUrl) {
         return "product" as const;
       }
 
@@ -964,8 +983,9 @@ export async function detectPageType(page: Page): Promise<PageType> {
         return "cart" as const;
       }
 
-      // Product page fallback (for pages on checkout URLs that also have ATC)
-      if (hasAddToCart || hasAtcText) {
+      // Product page fallback (for pages on checkout URLs that also have ATC, or
+      // pages that only expose product structured-data, not a detectable buy button)
+      if (hasAddToCart || hasAtcText || hasStructuredProduct) {
         return "product" as const;
       }
 

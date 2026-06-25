@@ -37,7 +37,8 @@ export const AMAZON_PRODUCT_URL =
  * Override with a current product URL via E2E_OTP_SHOP_URL.
  */
 export const OTP_SHOP_URL =
-  process.env.E2E_OTP_SHOP_URL ?? "https://www.thursdayboots.com/products/mens-captain-black";
+  process.env.E2E_OTP_SHOP_URL ??
+  "https://www.thursdayboots.com/products/leather-conditioner-brush-bundle";
 
 /**
  * A second major retailer (Best Buy by default; point at Target/Walmart/etc via

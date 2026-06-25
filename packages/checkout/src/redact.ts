@@ -101,7 +101,10 @@ export async function captureRedactedScreenshot(
 ): Promise<string | null> {
   const piiValues = filterPiiValues(options.piiValues ?? []);
   const aggressive = options.aggressive ?? false;
-  const quality = options.quality ?? 60;
+  // Quality 80 (up from 60): small far-corner controls — a header "log in | sign up",
+  // a compact menu — must stay legible for the model to aim a coordinate click. The
+  // extra image-token cost is modest; an unreadable control is a wasted round.
+  const quality = options.quality ?? 80;
 
   try {
     await page.evaluate(

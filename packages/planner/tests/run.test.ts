@@ -46,6 +46,8 @@ vi.mock("@tomo/identity", () => ({
   getSecret: () => "USER-SESSION-TOKEN",
 }));
 
+import { getRun } from "@tomo/core";
+import { buy as buyMock } from "@tomo/orchestrator";
 import { startRun, resumeRun } from "../src/run.js";
 
 let dir: string;
@@ -218,6 +220,30 @@ describe("Frontier Go Wild flight booking — the booking logic never silently s
     } finally {
       delete process.env.DRY_RUN_NO_SPEND;
     }
+  });
+});
+
+describe("lifecycle invariant — a run never stays 'running' after a step throws", () => {
+  it("persists 'failed' (not 'running') when a step throws mid-execution", async () => {
+    // Simulate a process-killing failure mid-execution: the purchase quote step
+    // throws (browser crash / network death / escaped error). The run MUST land
+    // in a terminal "failed" status, never be stranded in "running".
+    resolveStrategyMock.mockResolvedValue({
+      strategy: "guest",
+      email: "",
+      domain: "shop.example",
+    });
+    vi.mocked(buyMock).mockRejectedValueOnce(new Error("browser crashed mid-checkout"));
+
+    const start = await startRun("buy https://shop.example/p/crash as a guest");
+
+    expect(start.status).toBe("failed");
+    expect(start.error?.message).toContain("browser crashed");
+
+    // The persisted run (what ~/.tomo/runs.json would hold) is terminal — not "running".
+    const persisted = getRun(start.run_id);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.status).not.toBe("running");
   });
 });
 

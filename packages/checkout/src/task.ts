@@ -17,7 +17,10 @@ import {
 } from "./cache.js";
 import { createSession, destroySession } from "./session.js";
 import type { SessionOptions } from "./session.js";
-import { playwrightAct } from "./act.js";
+import { runCuaTask } from "./cua/loop.js";
+import { buildToolset } from "./cua/tools.js";
+import type { ToolContext, CuaStatus } from "./cua/tools.js";
+import { isChallengePage, waitForHumanToSolveChallenge } from "./captcha.js";
 import {
   scriptedDismissPopups,
   scriptedFillShipping,
@@ -231,6 +234,100 @@ function buildBriefInstruction(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * Build the objective for a concrete product purchase (the non-brief path). The
+ * CUA drives every page from this objective + the tool set; we only state the
+ * goal and the constraints (one unit, guest-vs-account, the dry-run payment
+ * park). Tool mechanics live in the CUA system prompt, not here.
+ */
+function buildPurchaseObjective(input: CheckoutInput): string {
+  const p = input.order.product;
+  const dryRun = input.dryRun;
+  const selections = input.selections;
+  const lines: string[] = [
+    `Objective: purchase this product and reach ${dryRun ? "the filled payment page" : "order confirmation"}: ${p.name ?? p.url} — ${p.url}.`,
+  ];
+  if (selections && Object.keys(selections).length > 0) {
+    lines.push(
+      `Select exactly these options: ${Object.entries(selections).map(([k, v]) => `${k}: ${v}`).join(", ")}.`,
+    );
+  }
+  lines.push(QTY_GUIDANCE);
+  // Account vs guest.
+  if (input.loginPlan?.register) {
+    // create_account was approved: register a fresh agent account on this site.
+    lines.push(
+      'ACCOUNT: create a NEW account on this site for this purchase. Find the "Create account"/"Sign up"/"Register" link (often under an Account or Login menu), open that form, then call the login tool — it registers the account with your email and a new password for you (you never type them). After the account is created, continue to buy the item.',
+    );
+  } else if (wantsProactiveLogin(input.loginPlan)) {
+    lines.push(
+      'ACCOUNT: this task runs on the user\'s own account. If a "Log in"/"Sign in" form or dialog is visible, call the login tool ONCE to sign in (the email/password/2FA are handled for you). Never create a new account, and do NOT let login block progress — completing the purchase is the priority.',
+    );
+  } else if (wantsAccountLogin(input.loginPlan)) {
+    lines.push(
+      'If a sign-in form appears and signing in is needed to proceed, call the login tool (existing account only; never create a new account).',
+    );
+  } else {
+    lines.push(
+      "Check out as a guest. Do not create an account or sign in unless the page blocks all further progress without it.",
+    );
+  }
+  lines.push(
+    "Plan: (1) close any popup/cookie/promo overlay; (2) add the item to the cart — if a required size/variant must be chosen, pick the first in-stock one; (3) proceed to checkout; (4) fill the shipping/contact form with the fill_shipping tool (use type with a var name for any field it misses); (5) choose the cheapest shipping option; (6) on the payment page " +
+      (dryRun
+        ? "call read_total, then call finish with status parked_payment and the total. Do NOT call fill_card or place the order."
+        : "call fill_card, then place the order, then call finish with status confirmation including the order number and total."),
+  );
+  return lines.join("\n");
+}
+
+/** Map a CUA terminal status to a checkout step for trace/reporting. */
+function cuaStepFor(status: CuaStatus): CheckoutStep {
+  switch (status) {
+    case "confirmation":
+      return "verify-confirmation";
+    case "parked_payment":
+      return "place-order";
+    case "parked_login":
+      return "proceed-to-checkout";
+    default:
+      return "checkout-error";
+  }
+}
+
+/** Translate the CUA result into the checkout-engine result shape. */
+async function mapCuaResult(
+  cua: { status: CuaStatus; orderNumber?: string; total?: string; note?: string; toolCalls: number },
+  base: { sessionId: string; replayUrl: string; durationMs: number; observedTotal?: string; page: Page },
+): Promise<CheckoutResult> {
+  const common = { sessionId: base.sessionId, replayUrl: base.replayUrl, durationMs: base.durationMs };
+  switch (cua.status) {
+    case "confirmation":
+      return { success: true, orderNumber: cua.orderNumber, finalTotal: cua.total ?? base.observedTotal, ...common };
+    case "parked_payment":
+      return { success: true, parkedAtPayment: true, finalTotal: cua.total ?? base.observedTotal, ...common };
+    case "parked_login":
+      return { success: true, parkedAtLogin: true, ...common };
+    default: {
+      let pageText = "";
+      try {
+        pageText = await base.page.evaluate(() => document.body?.textContent || "");
+      } catch {
+        /* best-effort */
+      }
+      const msg = cua.note ?? `checkout did not complete (status ${cua.status}, ${cua.toolCalls} tool calls)`;
+      return {
+        success: false,
+        finalTotal: base.observedTotal,
+        failedStep: "place-order" as CheckoutStep,
+        errorMessage: msg,
+        errorCategory: classifyError(msg, pageText),
+        ...common,
+      };
+    }
+  }
 }
 
 // ---- Error classification ----
@@ -451,6 +548,33 @@ export function classifyPageHealth(s: PageHealthSignals): PageHealthVerdict {
     };
   }
   return { blocked: false };
+}
+
+// ---- Navigation ----
+
+/**
+ * Navigate to a URL, retrying once with a short backoff on a transient failure
+ * (timeout / reset). A single flaky goto shouldn't kill an otherwise-fine run.
+ * Generic; no per-site logic. Throws the last error if every attempt fails.
+ */
+async function gotoWithRetry(
+  page: Page,
+  url: string,
+  timeoutMs = 30000,
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+      return;
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      console.log(`  [navigate] attempt ${attempt + 1} failed: ${msg}`);
+      if (attempt === 0) await page.waitForTimeout(2000);
+    }
+  }
+  throw lastErr;
 }
 
 // ---- Price tolerance ----
@@ -756,11 +880,10 @@ export async function runCheckout(
       await seedSessionCookies(session.context, input.loginPlan.sessionCookies);
     }
 
-    // 7. Navigate to product URL
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
+    // 7. Navigate to product URL. Navigation can flake (a slow first byte, a
+    //    transient timeout) on an otherwise-fine site, so retry once with backoff
+    //    before declaring the run dead. Generic — no per-site logic.
+    await gotoWithRetry(page, url);
     await page.waitForTimeout(5000);
 
     // 8a-verify. Redirect verification
@@ -813,7 +936,32 @@ export async function runCheckout(
           visibleControls: controls.length,
         };
       });
-      const verdict = classifyPageHealth(signals);
+      let verdict = classifyPageHealth(signals);
+      if (verdict.blocked) {
+        // We have no stealth/Browserbase, so we can't auto-defeat a bot wall. But on
+        // a headful run (HEADLESS=false) a human is watching the window — if this is
+        // an actual CAPTCHA/challenge, give them a window to solve it by hand, then
+        // re-check. Generic: keyed only on standard challenge markers, never a domain.
+        const headful = process.env.HEADLESS === "false";
+        if (headful && (await isChallengePage(page))) {
+          const cleared = await waitForHumanToSolveChallenge(page);
+          if (cleared) {
+            const reSignals = await page.evaluate(() => {
+              const bodyText = (document.body?.textContent || "").trim();
+              const visible = (el: Element): boolean => (el as HTMLElement).offsetParent !== null;
+              const controls = Array.from(
+                document.querySelectorAll('a[href], button, input, select, textarea, [role="button"]'),
+              ).filter(visible);
+              return {
+                charCount: bodyText.length,
+                wordCount: bodyText.split(/\s+/).filter((w) => w.length > 0).length,
+                visibleControls: controls.length,
+              };
+            });
+            verdict = classifyPageHealth(reSignals);
+          }
+        }
+      }
       if (verdict.blocked) {
         console.log(
           `  [bot-blocked] ${verdict.reason} (${signals.charCount} chars, ${signals.wordCount} words, ${signals.visibleControls} controls)`,
@@ -856,1099 +1004,116 @@ export async function runCheckout(
     // 8d. Initial scripted popup dismissal
     await scriptedDismissPopups(page);
 
-    // 9. Page-based loop
-    const state: LoopState = {
-      currentStep: "navigate",
-      addedToCart: false,
-      shippingFilled: false,
-      cardFilled: false,
-      billingFilled: false,
-      selectionsApplied: false,
-      loggedIn: false,
-      loginAttempts: 0,
-      llmCalls: 0,
-      pagesVisited: 0,
-      lastUrl: page.url(),
-      lastPageType: null,
-      lastFingerprint: "",
-      stallCount: 0,
-      confirmationData: undefined,
+    // 9. Drive the page with the computer-use agent (CUA). One strong model,
+    //    holding the full conversation across the whole task, calls browser +
+    //    capability tools to accomplish the objective. Scripted logic survives
+    //    ONLY inside those tools (login, card/shipping fill, OTP) — never as a
+    //    page-type control-flow switch. Secrets stay server-side in the tools.
+    const objective = (() => {
+      const base =
+        briefDriven && input.brief
+          ? buildBriefInstruction(input.brief, input.dryRun, input.loginPlan)
+          : buildPurchaseObjective(input);
+      return input.stopAfterLogin
+        ? `${base}\nAs soon as you are signed in, call finish with status parked_login — do NOT continue to the cart or payment.`
+        : base;
+    })();
+
+    const toolContext: ToolContext = {
+      page,
+      context: session.context,
+      variables: stagehandVars,
+      cdpCreds,
+      shippingData,
+      loginPlan: input.loginPlan,
+      agentInboxId,
+      domain,
+      dryRun: input.dryRun,
+      log: (m) => console.log(`    ${m}`),
     };
+    // PII + card values are redacted from screenshots (defense-in-depth). They
+    // only ever reach the redactor here — never the model prompt or a tool arg.
+    const piiValues = [
+      ...Object.values(stagehandVars),
+      ...Object.values(cdpCreds),
+    ].filter((v) => typeof v === "string" && v.length >= 4);
 
-    // Login-checkpoint park: once login has advanced, snapshot + record + return
-    // without driving cart/payment. Mirrors the dry-run payment park, one stage
-    // earlier. Generic: triggered by the login executor's advance, not any site.
-    const parkAtLogin = async (
-      pageIdx: number,
-      pageType: PageType,
-      note: string,
-    ): Promise<CheckoutResult> => {
-      state.currentStep = "proceed-to-checkout";
-      console.log(`  [login-checkpoint] PARKED after login (${note})`);
-      tracer?.stepTracker.setStep("proceed-to-checkout");
-      const parkedShot = await tracer?.snapshot(page, "PARKED-login");
-      tracer?.record({
-        pageIndex: pageIdx,
-        url: page.url(),
-        pageType,
-        action: "parked-after-login",
-        mode: "login",
-        loginStrategy: input.loginPlan?.strategy,
-        advanced: true,
-        llmCalls: state.llmCalls,
-        screenshot: parkedShot,
-        note,
-        details: { parked_at: "login" },
-        outcome: "pass",
-      });
+    tracer?.stepTracker.setStep("navigate");
+    await tracer?.snapshot(page, "cua-start");
+
+    const cua = await runCuaTask({
+      objective,
+      tools: buildToolset({ dryRun: input.dryRun }),
+      toolContext,
+      piiValues,
+      log: (m) => console.log(m),
+    });
+
+    console.log(
+      `  [cua] finished: status=${cua.status} toolCalls=${cua.toolCalls} rounds=${cua.rounds}${cua.note ? ` (${cua.note})` : ""}`,
+    );
+
+    // Best-effort observed total + domain cache for the receipt/oversight view.
+    let observedTotal = cua.total;
+    if (!observedTotal) {
       try {
-        saveDomainCache(await extractDomainCache(page, domain));
-      } catch { /* best-effort */ }
-      return {
-        success: true,
-        parkedAtLogin: true,
-        sessionId: session.id,
-        replayUrl: session.replayUrl,
-        durationMs: Date.now() - startMs,
-      };
-    };
-
-    for (let pageIdx = 0; pageIdx < maxPages; pageIdx++) {
-      state.pagesVisited = pageIdx;
-
-      // 9a. Wait for page to settle
-      await page.waitForTimeout(2000);
-
-      // 9b. Dismiss popups. A real Escape keypress (not a synthetic event) closes
-      //     framework-driven modals whose backdrops otherwise intercept every click.
-      await scriptedDismissPopups(page);
-      try { await page.keyboard.press("Escape"); } catch { /* best-effort */ }
-
-      // 9b-login. Opportunistic connected/agent account login. A visible password
-      // field (or a sign-in form inside a dialog) means a login form is on screen —
-      // even a MODAL login that never changed the URL or page-type. Driving it here
-      // (not only on a detected login-gate page) is what lets "log in as the user"
-      // actually happen on sites whose login is a header dropdown/modal. Capped so a
-      // login that can't complete (e.g. site wants a password we don't hold) never
-      // loops — the task continues as the priority.
-      if (
-        wantsAccountLogin(input.loginPlan) &&
-        !state.loggedIn &&
-        state.loginAttempts < 2
-      ) {
-        const hasLoginForm = await page
-          .evaluate(() => {
-            const visible = (el: Element | null): boolean =>
-              !!el && (el as HTMLElement).offsetParent !== null;
-            const pw = document.querySelector('input[type="password"]');
-            if (visible(pw)) return true;
-            // Email field + a visible "log in/sign in" submit inside a dialog/modal.
-            const inDialog = document.querySelector(
-              '[role="dialog"] input[type="email"], [aria-modal="true"] input[type="email"], [class*="login" i] input[type="email"], [class*="signin" i] input[type="email"]',
-            );
-            if (!visible(inDialog)) return false;
-            const btns = Array.from(
-              document.querySelectorAll('button, [role="button"], input[type="submit"]'),
-            );
-            return btns.some((b) => {
-              if (!visible(b)) return false;
-              const t = `${(b.textContent || "")} ${(b as HTMLInputElement).value || ""}`.toLowerCase();
-              return /\b(log ?in|sign ?in)\b/.test(t);
-            });
-          })
-          .catch(() => false);
-        if (hasLoginForm) {
-          state.loginAttempts++;
-          try {
-            const r = await executeLogin(page, session.context, input.loginPlan);
-            if (r.advanced) {
-              state.loggedIn = true;
-              console.log(`  [login] connected-account login: ${r.note ?? input.loginPlan?.strategy}`);
-              if (shouldParkAfterLogin(input.stopAfterLogin, r.advanced)) {
-                return parkAtLogin(pageIdx, "login-gate", r.note ?? "connected-account login");
-              }
-            } else {
-              console.log(`  [login] attempt ${state.loginAttempts} did not complete (${r.note ?? "no progress"}); continuing task`);
-            }
-          } catch (err) {
-            console.log(`  [login error] ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
-          }
-          await page.waitForTimeout(2000);
-        }
-      }
-
-      // 9c. Detect page type
-      let pageType: PageType;
-      try {
-        pageType = await detectPageType(page);
+        observedTotal = await extractVisibleTotal(page);
       } catch {
-        console.log(`  [detect-error] detectPageType threw, treating as unknown`);
-        pageType = "unknown";
-      }
-      state.currentStep = pageTypeToStep(pageType);
-      console.log(`[page ${pageIdx}] type=${pageType} url=${page.url().slice(0, 80)}`);
-
-      // 9c-trace. Snapshot the page on entry and advance the step tracker.
-      tracer?.stepTracker.setStep(state.currentStep);
-      const shot = await tracer?.snapshot(page, `${pageIdx}-${pageType}`);
-      let iterMode: TraceMode = "scripted";
-      let iterAction = `page:${pageType}`;
-
-      // 9c-skill. Record the page in the flow, and wrap scripted clicks/selects so
-      // the literal selector that matched is captured for the site skill.
-      recorder.observePage(pageIdx, pageType, page.url());
-      const recClick = (target: string): Promise<boolean> =>
-        scriptedClickButton(page, target, (m) =>
-          recorder.recordSelector({
-            pageType,
-            action: "click-button",
-            fieldLabel: target,
-            matchedSelector: m.selector ?? `text=${m.text}`,
-            provenance: "STRUCTURAL",
-          }),
-        );
-      const recSelect = (target: string, ty: "radio" | "checkbox" = "radio"): Promise<boolean> =>
-        scriptedSelectOption(page, target, ty, (m) =>
-          recorder.recordSelector({
-            pageType,
-            action: "select-option",
-            fieldLabel: target,
-            matchedSelector: m.selector ?? `text=${m.text}`,
-            provenance: "SELECTION",
-          }),
-        );
-      // Read-back: try selectors known to work on this page type from a prior run.
-      const tryKnownClick = async (): Promise<boolean> => {
-        for (const sel of skillHints.forClick(pageType)) {
-          if (await scriptedClickSelector(page, sel)) {
-            recorder.recordSelector({
-              pageType,
-              action: "click-button",
-              fieldLabel: "known",
-              matchedSelector: sel,
-              provenance: "STRUCTURAL",
-            });
-            return true;
-          }
-        }
-        return false;
-      };
-
-      // 9d. Run page-type handler (all scripted, 0 LLM)
-      let advanced = false;
-
-      switch (pageType) {
-        case "donation-landing": {
-          if (briefDriven) break; // brief-driven; LLM fallback handles it
-          // 3-step scripted handler: select amount → one-time → click payment button
-          console.log(`  [donation] entering scripted handler, price=${input.order.product.price}`);
-          const price = input.order.product.price;
-          let amountSelected = false;
-
-          // Step 1: Select donation amount matching order price
-          if (price) {
-            const priceNum = parseFloat(price);
-            const variants = [
-              `$${priceNum}`, `$${priceNum.toFixed(2)}`, `${priceNum}`, `${priceNum.toFixed(2)}`,
-            ];
-
-            // Try radio buttons with matching value
-            for (const v of variants) {
-              if (await recSelect(v, "radio")) {
-                amountSelected = true;
-                console.log(`  [donation] selected amount via radio: ${v}`);
-                break;
-              }
-            }
-
-            // Try data-amount or clickable elements containing price text
-            if (!amountSelected) {
-              amountSelected = await page.evaluate((vars: string[]) => {
-                // data-amount attributes
-                for (const v of vars) {
-                  const plain = v.replace("$", "");
-                  const el = document.querySelector(`[data-amount="${plain}"], [data-amount="${v}"]`);
-                  if (el) { (el as HTMLElement).click(); return true; }
-                }
-                // Buttons/labels containing the price text
-                const clickables = document.querySelectorAll(
-                  'button, label, [role="button"], [class*="amount" i], [class*="option" i]',
-                );
-                for (const el of clickables) {
-                  const text = (el.textContent || "").trim();
-                  if (vars.some(v => text === v || text.includes(v))) {
-                    (el as HTMLElement).click();
-                    return true;
-                  }
-                }
-                return false;
-              }, variants);
-              if (amountSelected) console.log(`  [donation] selected amount via DOM click`);
-            }
-          }
-
-          // Step 2: Select one-time (not recurring)
-          if (amountSelected) {
-            await page.waitForTimeout(500);
-            const oneTimeSelected =
-              await recSelect("one-time", "radio") ||
-              await recSelect("one time", "radio") ||
-              await recSelect("just once", "radio");
-            if (oneTimeSelected) console.log(`  [donation] selected one-time frequency`);
-          }
-
-          // Step 3: Click payment button (only if amount was selected)
-          if (amountSelected) {
-            await page.waitForTimeout(500);
-            advanced =
-              await recClick("donate by credit") ||
-              await recClick("donate by card") ||
-              await recClick("credit card") ||
-              await recClick("credit/debit card") ||
-              await recClick("donate now") ||
-              await recClick("continue") ||
-              await recClick("donate") ||
-              await recClick("give now");
-            if (advanced) console.log(`  [donation] clicked payment button`);
-          }
-
-          // If amount selection failed → advanced stays false → LLM fallback
-          if (!amountSelected && price) {
-            console.log(`  [donation] scripted amount selection failed for $${price}`);
-          }
-          break;
-        }
-
-        case "product": {
-          if (briefDriven) break; // a task page misdetected as product — brief drives it
-          if (input.selections && Object.keys(input.selections).length > 0 && !state.selectionsApplied) {
-            // Variant selection needed and not yet applied — defer to LLM
-            // advanced stays false → LLM fallback handles selection
-            break;
-          }
-
-          // If already added to cart, navigate to /checkout directly
-          if (state.addedToCart) {
-            console.log(`  [product] already in cart, navigating to /checkout`);
-            try {
-              const checkoutUrl = new URL(page.url());
-              checkoutUrl.pathname = "/checkout";
-              checkoutUrl.search = "";
-              await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
-              advanced = true;
-            } catch {
-              // Fall through to LLM
-            }
-            break;
-          }
-
-          // Check for out-of-stock / unavailable variant before trying ATC.
-          // An ENABLED add-to-cart/buy-now control means the product is purchasable,
-          // so it overrides stray "notify me"/"sold out" text elsewhere on the page
-          // (e.g. a back-in-stock widget for a different color/size swatch). Only when
-          // there is no purchasable control AND an unavailable signal do we bail.
-          const isUnavailable = await page.evaluate(() => {
-            const atcLabels = [
-              "add to cart", "add to bag", "add to basket",
-              "buy now", "ship it", "deliver it",
-            ];
-            const unavailableTexts = [
-              "option not available", "sold out", "out of stock",
-              "unavailable", "notify me", "coming soon", "not available",
-              "currently out", "temporarily out",
-            ];
-            const controls = Array.from(
-              document.querySelectorAll('button, input[type="submit"], [role="button"]'),
-            );
-            const labelOf = (el: Element): string => {
-              const value = el instanceof HTMLInputElement ? el.value : "";
-              return `${(el.textContent || "").trim()} ${value}`.toLowerCase();
-            };
-            const isDisabled = (el: Element): boolean =>
-              (el as HTMLButtonElement | HTMLInputElement).disabled === true ||
-              el.getAttribute("aria-disabled") === "true";
-
-            // A purchasable control present and enabled → in stock.
-            const hasEnabledAtc = controls.some((el) => {
-              const label = labelOf(el);
-              return atcLabels.some((a) => label.includes(a)) && !isDisabled(el);
-            });
-            if (hasEnabledAtc) return null;
-
-            // No purchasable control — surface the first explicit unavailable signal.
-            for (const el of controls) {
-              const label = labelOf(el);
-              const hit = unavailableTexts.find((s) => label.includes(s));
-              if (hit) return hit;
-            }
-            return null;
-          });
-          if (isUnavailable) {
-            console.log(`  [product] ATC button unavailable: "${isUnavailable}"`);
-            return {
-              success: false,
-              sessionId: session.id,
-              replayUrl: session.replayUrl,
-              failedStep: "add-to-cart" as CheckoutStep,
-              errorMessage: `out_of_stock: ${isUnavailable}`,
-              durationMs: Date.now() - startMs,
-            };
-          }
-
-          // No selections needed, or selections already applied — try scripted add-to-cart
-          // Prefer "buy now" (goes directly to checkout, skips cart drawer)
-          const addedToCart =
-            (await tryKnownClick()) ||
-            await recClick("buy now") ||
-            await recClick("add to cart") ||
-            await recClick("add to bag") ||
-            await recClick("add to basket") ||
-            await recClick("ship it") ||
-            await recClick("deliver it");
-          if (addedToCart) {
-            state.addedToCart = true;
-            console.log(`  [product] added to cart via scripted click`);
-            // Wait for navigation or cart drawer to appear
-            await page.waitForTimeout(3000);
-            // Check if page already navigated (buy now can go direct to checkout)
-            const postAtcUrl = page.url();
-            if (postAtcUrl !== url) {
-              advanced = true;
-            } else {
-              // Still on product page — try checkout buttons in cart drawer
-              advanced =
-                await recClick("checkout") ||
-                await recClick("proceed to checkout") ||
-                await recClick("go to checkout") ||
-                await recClick("secure checkout") ||
-                await recClick("view bag") ||
-                await recClick("view cart");
-              // If no checkout button found, navigate directly to /checkout
-              if (!advanced) {
-                console.log(`  [product] no checkout button in drawer, navigating to /checkout`);
-                try {
-                  const checkoutUrl = new URL(page.url());
-                  checkoutUrl.pathname = "/checkout";
-                  checkoutUrl.search = "";
-                  await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
-                  advanced = true;
-                } catch {
-                  // Fall through to LLM
-                }
-              }
-            }
-          }
-          break;
-        }
-
-        case "cart": {
-          if (briefDriven) break; // brief-driven; LLM fallback handles it
-          advanced =
-            (await tryKnownClick()) ||
-            await recClick("checkout") ||
-            await recClick("proceed to checkout") ||
-            await recClick("continue to checkout") ||
-            await recClick("secure checkout") ||
-            await recClick("go to checkout") ||
-            await recClick("start checkout") ||
-            await recClick("begin checkout");
-          // Fallback: navigate directly to /checkout if buttons didn't work
-          if (!advanced) {
-            console.log(`  [cart] no checkout button found, navigating to /checkout`);
-            try {
-              const checkoutUrl = new URL(page.url());
-              checkoutUrl.pathname = "/checkout";
-              checkoutUrl.search = "";
-              await page.goto(checkoutUrl.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
-              advanced = true;
-            } catch {
-              // Fall through to LLM
-            }
-          }
-          break;
-        }
-
-        case "login-gate": {
-          // If an identity strategy was resolved upstream, log in with it.
-          const loginResult = await executeLogin(
-            page,
-            session.context,
-            input.loginPlan,
-          );
-          if (loginResult.handled) {
-            console.log(`  [login] ${loginResult.note ?? input.loginPlan?.strategy}`);
-            iterMode = "login";
-            iterAction = `login:${loginResult.note ?? input.loginPlan?.strategy ?? "unknown"}`;
-            advanced = loginResult.advanced;
-            if (shouldParkAfterLogin(input.stopAfterLogin, loginResult.advanced)) {
-              return parkAtLogin(pageIdx, pageType, loginResult.note ?? "login gate");
-            }
-            break;
-          }
-          // Otherwise fall back to guest checkout (default behavior).
-          advanced =
-            await recClick("guest checkout") ||
-            await recClick("continue as guest") ||
-            await recClick("continue without account") ||
-            await recClick("guest") ||
-            await recClick("checkout as guest") ||
-            await recClick("continue without signing in") ||
-            await recClick("skip sign in") ||
-            await recClick("shop as guest") ||
-            await recClick("checkout without an account") ||
-            await recClick("no thanks");
-          break;
-        }
-
-        case "email-verification": {
-          // Poll AgentMail for verification code
-          if (agentInboxId) {
-            const pollStart = new Date().toISOString();
-            const code = await pollForVerificationCode(agentInboxId, pollStart, 60_000);
-
-            if (code) {
-              state.verificationCode = code;
-              const filled = await scriptedFillVerificationCode(page, code);
-              if (filled) {
-                console.log(`  [email-verification] filled code: ${code}`);
-                await page.waitForTimeout(1000);
-                advanced =
-                  await recClick("verify") ||
-                  await recClick("submit") ||
-                  await recClick("continue") ||
-                  await recClick("confirm");
-              }
-            } else {
-              console.log("  [email-verification] timed out waiting for code");
-            }
-          } else {
-            console.log("  [email-verification] no AgentMail inbox available");
-          }
-          break;
-        }
-
-        case "shipping-form": {
-          if (briefDriven) break; // a task's own form fields — brief drives the fill, not scripted shipping
-          const shipResult = await scriptedFillShipping(
-            page, shippingData, skillHints.fillHintsFor("fill-shipping"),
-          );
-          const filled = shipResult.filled;
-          for (const m of shipResult.matched) {
-            recorder.recordSelector({
-              pageType, action: "fill-shipping",
-              fieldLabel: m.field, matchedSelector: m.selector, provenance: "USER_INPUT",
-            });
-          }
-          state.shippingFilled = filled.length > 0;
-          if (filled.length > 0) {
-            console.log(`  [shipping] filled ${filled.length} fields: ${filled.join(", ")}`);
-          }
-
-          // If scripted fill got < 3 fields, supplement with LLM using variables
-          if (filled.length < 3 && state.llmCalls < MAX_LLM_CALLS) {
-            console.log(`  [shipping] only ${filled.length} fields via script, supplementing with LLM`);
-            try {
-              await playwrightAct(
-                page,
-                `Fill the shipping/contact form (email, full name, street address, city, state, zip, phone). Skip any fields already filled.`,
-                { variables: stagehandVars },
-              );
-              state.llmCalls++;
-              state.shippingFilled = true;
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              console.log(`  [shipping llm error] ${msg.slice(0, 100)}`);
-              state.llmCalls++;
-            }
-          }
-
-          if (state.shippingFilled || filled.length > 0) {
-            await page.waitForTimeout(1000);
-            advanced =
-              await recClick("continue") ||
-              await recClick("continue to payment") ||
-              await recClick("next") ||
-              await recClick("save and continue") ||
-              await recClick("continue to shipping");
-          }
-          break;
-        }
-
-        case "payment-form":
-        case "payment-gateway": {
-          // Combined checkout pages (Glossier, etc.) show shipping + payment on same page.
-          // Fill shipping first if not done yet.
-          if (!state.shippingFilled) {
-            const shipResult2 = await scriptedFillShipping(
-              page, shippingData, skillHints.fillHintsFor("fill-shipping"),
-            );
-            const shippingFilled = shipResult2.filled;
-            for (const m of shipResult2.matched) {
-              recorder.recordSelector({
-                pageType, action: "fill-shipping",
-                fieldLabel: m.field, matchedSelector: m.selector, provenance: "USER_INPUT",
-              });
-            }
-            state.shippingFilled = shippingFilled.length > 0;
-            if (shippingFilled.length > 0) {
-              console.log(`  [payment-page shipping] filled ${shippingFilled.length} fields: ${shippingFilled.join(", ")}`);
-            }
-            // Supplement with LLM if scripted got < 3 fields
-            if (shippingFilled.length < 3 && state.llmCalls < MAX_LLM_CALLS) {
-              console.log(`  [payment-page shipping] only ${shippingFilled.length} fields via script, supplementing with LLM`);
-              try {
-                await playwrightAct(
-                  page,
-                  `Fill the shipping/contact form fields on this page (email, full name, street address, city, state, zip, phone). Skip any fields already filled.`,
-                  { variables: stagehandVars },
-                );
-                state.llmCalls++;
-                state.shippingFilled = true;
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                console.log(`  [payment-page shipping llm error] ${msg.slice(0, 100)}`);
-                state.llmCalls++;
-              }
-            }
-            // Click continue if there's a shipping-to-payment transition button
-            await page.waitForTimeout(1000);
-            await recClick("continue") ||
-              await recClick("continue to payment") ||
-              await recClick("next") ||
-              await recClick("save and continue");
-            await page.waitForTimeout(2000);
-          }
-
-          // Dry run (no-spend oversight): never type a card. Skip the entire
-          // card/billing fill and go straight to the parked-at-payment return.
-          if (!input.dryRun && !state.cardFilled) {
-            // Uncheck billing same as shipping
-            await scriptedUncheckBillingSameAsShipping(page);
-            await page.waitForTimeout(500);
-
-            // Fill card fields
-            const cardResult = await scriptedFillCardFields(
-              page, cdpCreds, skillHints.fillHintsFor("fill-card"),
-            );
-            state.cardFilled = cardResult.filled > 0;
-            console.log(`  [card] filled ${cardResult.filled} fields via ${cardResult.method}`);
-            for (const m of cardResult.matched) {
-              // CDP_SECRET: label + selector only — never a card value.
-              recorder.recordSelector({
-                pageType, action: "fill-card",
-                fieldLabel: m.field, matchedSelector: m.selector, provenance: "CDP_SECRET",
-              });
-            }
-
-            // Wait longer for form validation after card fill
-            if (state.cardFilled) {
-              await page.waitForTimeout(2000);
-            }
-
-            // Fill billing if available
-            if (billingData.street) {
-              const billingFilled = await scriptedFillBilling(page, billingData);
-              state.billingFilled = billingFilled.length > 0;
-              if (billingFilled.length > 0) {
-                console.log(`  [billing] filled ${billingFilled.length} fields: ${billingFilled.join(", ")}`);
-              }
-            }
-          }
-
-          if (input.dryRun) {
-            // Dry run: extract total and stop — parked at the payment page,
-            // no card issued, no order placed.
-            const total = await extractVisibleTotal(page);
-            state.confirmationData = { total };
-            state.currentStep = "place-order";
-            console.log(`  [dry-run] PARKED at payment, total=${total ?? "(not found)"}`);
-            advanced = true; // Signal completion
-            tracer?.stepTracker.setStep("place-order");
-            const parkedShot = await tracer?.snapshot(page, "PARKED-payment");
-            tracer?.record({
-              pageIndex: pageIdx,
-              url: page.url(),
-              pageType,
-              action: "parked-before-place-order",
-              mode: "navigate",
-              loginStrategy: input.loginPlan?.strategy,
-              advanced: true,
-              llmCalls: state.llmCalls,
-              screenshot: parkedShot,
-              note: `observed_total=${total ?? "(not found)"}`,
-              details: { observed_total: total ?? undefined, parked_at: "payment" },
-              outcome: "pass",
-            });
-            // Return early for dry run — don't place order
-            const durationMs = Date.now() - startMs;
-            // Save domain cache before returning
-            try {
-              const newCache = await extractDomainCache(page, domain);
-              saveDomainCache(newCache);
-            } catch { /* best-effort */ }
-
-            return {
-              success: true,
-              finalTotal: total,
-              parkedAtPayment: true,
-              sessionId: session.id,
-              replayUrl: session.replayUrl,
-              durationMs,
-            };
-          }
-
-          // Live: click place order — try multiple common button labels
-          advanced =
-            (await tryKnownClick()) ||
-            await recClick("place order") ||
-            await recClick("complete purchase") ||
-            await recClick("submit order") ||
-            await recClick("donate") ||
-            await recClick("pay now") ||
-            await recClick("complete order") ||
-            await recClick("confirm order") ||
-            await recClick("pay") ||
-            await recClick("submit payment");
-
-          // Post-submit: check for inline validation errors (async merchant responses)
-          if (advanced) {
-            await page.waitForTimeout(3000);
-            const postSubmitType = await detectPageType(page);
-            if (postSubmitType === "error") {
-              const errorData = await extractErrorMessage(page);
-              console.log(`  [post-submit error] type=${errorData.type} message=${errorData.message.slice(0, 100)}`);
-
-              try {
-                const newCache = await extractDomainCache(page, domain);
-                saveDomainCache(newCache);
-              } catch { /* best-effort */ }
-
-              return {
-                success: false,
-                sessionId: session.id,
-                replayUrl: session.replayUrl,
-                failedStep: CHECKOUT_STEPS.CHECKOUT_ERROR as CheckoutStep,
-                errorMessage: `${errorData.type}: ${errorData.message}`,
-                durationMs: Date.now() - startMs,
-              };
-            }
-          }
-          break;
-        }
-
-        case "confirmation": {
-          const data = await extractConfirmationData(page);
-          state.confirmationData = data;
-          state.currentStep = "verify-confirmation";
-          console.log(`  [confirmation] order=${data.orderNumber ?? "?"} total=${data.total ?? "?"}`);
-
-          // Save domain cache
-          try {
-            const newCache = await extractDomainCache(page, domain);
-            saveDomainCache(newCache);
-          } catch { /* best-effort */ }
-
-          // Persist the per-site skill (best-effort; never fails the purchase).
-          await persistSkill(recorder, domain);
-
-          return {
-            success: true,
-            orderNumber: data.orderNumber,
-            finalTotal: data.total,
-            sessionId: session.id,
-            replayUrl: session.replayUrl,
-            durationMs: Date.now() - startMs,
-          };
-        }
-
-        case "error": {
-          const errorData = await extractErrorMessage(page);
-          console.log(`  [error] type=${errorData.type} message=${errorData.message.slice(0, 100)}`);
-
-          // Save domain cache before returning
-          try {
-            const newCache = await extractDomainCache(page, domain);
-            saveDomainCache(newCache);
-          } catch { /* best-effort */ }
-
-          return {
-            success: false,
-            sessionId: session.id,
-            replayUrl: session.replayUrl,
-            failedStep: CHECKOUT_STEPS.CHECKOUT_ERROR as CheckoutStep,
-            errorMessage: `${errorData.type}: ${errorData.message}`,
-            durationMs: Date.now() - startMs,
-          };
-        }
-
-        default: {
-          // unknown — check for help/FAQ page recovery before LLM fallback
-          const currentUrl = page.url().toLowerCase();
-          if (state.addedToCart && (
-            currentUrl.includes("/help") ||
-            currentUrl.includes("/faq") ||
-            currentUrl.includes("/support") ||
-            currentUrl.includes("/customer-service")
-          )) {
-            try {
-              const origin = new URL(page.url()).origin;
-              console.log(`  [recovery] help page detected, navigating to ${origin}/cart`);
-              await page.goto(`${origin}/cart`, { waitUntil: "domcontentloaded", timeout: 15000 });
-              advanced = true;
-            } catch {
-              // Fall through to LLM
-            }
-          }
-          break;
-        }
-      }
-
-      // 9d-trace. Record the scripted handler outcome for this page.
-      tracer?.record({
-        pageIndex: pageIdx,
-        url: page.url(),
-        pageType,
-        action: iterAction,
-        mode: iterMode,
-        loginStrategy: input.loginPlan?.strategy,
-        advanced,
-        stallCount: state.stallCount,
-        llmCalls: state.llmCalls,
-        screenshot: shot,
-        outcome: advanced ? "pass" : undefined,
-      });
-
-      // 9e. Stall detection — track URL + page type to detect no-progress loops.
-      //     A task flow fills a multi-field form without navigating, so URL+pageType
-      //     alone reads as "stalled" even while real progress happens. Fold in a cheap
-      //     DOM fingerprint (filled-input count + total typed length) so form progress
-      //     on the same page counts as advance.
-      const currentUrl = page.url();
-      const fingerprint = briefDriven
-        ? await page
-            .evaluate(() => {
-              const inputs = Array.from(document.querySelectorAll("input, select, textarea")) as HTMLInputElement[];
-              let filled = 0;
-              let len = 0;
-              for (const el of inputs) {
-                const v = (el.value || "").trim();
-                if (v) { filled++; len += v.length; }
-              }
-              // Fold in interactive-element count so DOM changes (new options
-              // rendering, a drawer opening) count as real progress. Deliberately
-              // NOT scroll position: a stall must still accrue while we scroll-nudge
-              // a stuck page, both so we eventually give up and so the nudge fires.
-              const interactive = document.querySelectorAll(
-                'a, button, input, select, textarea, [role="button"], [role="option"]',
-              ).length;
-              return `${filled}:${len}:${interactive}`;
-            })
-            .catch(() => "")
-        : "";
-      const sameContent =
-        currentUrl === state.lastUrl &&
-        pageType === state.lastPageType &&
-        (!briefDriven || fingerprint === state.lastFingerprint);
-      if (sameContent) {
-        state.stallCount++;
-        console.log(`  [stall] same url+page type ${state.stallCount} times`);
-      } else {
-        state.stallCount = 0;
-      }
-      state.lastUrl = currentUrl;
-      state.lastPageType = pageType;
-      state.lastFingerprint = fingerprint;
-
-      // Break out if completely stuck on same page. Brief-driven tasks get a larger
-      // budget (more distinct pages, every page is an LLM step).
-      const stuckLimit = briefDriven ? 9 : 5;
-      if (state.stallCount >= stuckLimit) {
-        console.log(`  [stuck] ${state.stallCount} stalls on ${pageType} — giving up`);
-        break;
-      }
-
-      // 9f. Check if we reached confirmation or error after scripted actions
-      if (advanced) {
-        await page.waitForTimeout(2000);
-        const postType = await detectPageType(page);
-        if (postType === "confirmation") {
-          const data = await extractConfirmationData(page);
-          state.confirmationData = data;
-          state.currentStep = "verify-confirmation";
-          console.log(`  [post-action confirmation] order=${data.orderNumber ?? "?"} total=${data.total ?? "?"}`);
-
-          try {
-            const newCache = await extractDomainCache(page, domain);
-            saveDomainCache(newCache);
-          } catch { /* best-effort */ }
-
-          await persistSkill(recorder, domain);
-
-          return {
-            success: true,
-            orderNumber: data.orderNumber,
-            finalTotal: data.total,
-            sessionId: session.id,
-            replayUrl: session.replayUrl,
-            durationMs: Date.now() - startMs,
-          };
-        }
-        if (postType === "error") {
-          const errorData = await extractErrorMessage(page);
-          console.log(`  [post-action error] type=${errorData.type} message=${errorData.message.slice(0, 100)}`);
-
-          try {
-            const newCache = await extractDomainCache(page, domain);
-            saveDomainCache(newCache);
-          } catch { /* best-effort */ }
-
-          return {
-            success: false,
-            sessionId: session.id,
-            replayUrl: session.replayUrl,
-            failedStep: CHECKOUT_STEPS.CHECKOUT_ERROR as CheckoutStep,
-            errorMessage: `${errorData.type}: ${errorData.message}`,
-            durationMs: Date.now() - startMs,
-          };
-        }
-      }
-
-      // 9g. LLM fallback — if scripted handler didn't advance, or stalled ≥2 times
-      const needsLlm = !advanced || state.stallCount >= 2;
-      if (needsLlm && state.llmCalls < maxLlm) {
-        const isStalled = state.stallCount >= 2;
-        const instruction = buildPageInstruction(pageType, input, state, isStalled);
-
-        // Scroll nudge: a form-flow page that won't advance is usually one where the
-        // option to act on (a selectable row, a price, a Continue button) is below
-        // the fold and the model won't scroll on its own. Deterministically cycle the
-        // viewport down the page each stall so the next screenshot reveals new
-        // content; wrap back to the top after reaching the bottom. Generic — no
-        // site-specific selectors.
-        if (briefDriven && isStalled) {
-          await page
-            .evaluate(() => {
-              const atBottom =
-                window.scrollY + window.innerHeight >= document.body.scrollHeight - 60;
-              if (atBottom) window.scrollTo({ top: 0 });
-              else window.scrollBy({ top: Math.round(window.innerHeight * 0.7) });
-            })
-            .catch(() => {});
-          await page.waitForTimeout(500);
-        }
-
-        console.log(`  [llm fallback ${state.llmCalls + 1}/${maxLlm}${isStalled ? " STALLED" : ""}] ${instruction.slice(0, 100)}...`);
-        tracer?.record({
-          pageIndex: pageIdx,
-          url: page.url(),
-          pageType,
-          action: `llm-act:${instruction.slice(0, 80)}`,
-          mode: "llm",
-          loginStrategy: input.loginPlan?.strategy,
-          stallCount: state.stallCount,
-          llmCalls: state.llmCalls + 1,
-          note: isStalled ? "stalled" : undefined,
-        });
-
-        try {
-          // The iterative executor re-snapshots between actions and types with real
-          // keystrokes, so it can drive dynamic widgets (autocomplete suggestion
-          // lists, date pickers, steppers) that a single-pass `.fill()` can't. Used
-          // for every LLM fallback — it's a strict superset of the single-pass path.
-          await playwrightAct(page, instruction, {
-            variables: stagehandVars,
-            iterative: true,
-            // Form-flow pages (a multi-field search/booking form) need more in-page
-            // rounds to fill several widgets (autocompletes, date picker, steppers)
-            // and then submit, before the outer loop re-detects the page. The product
-            // page genuinely needs its rounds too — dismissing popups, selecting a
-            // variant, and scrolling the Add-to-Cart button into view — so we keep
-            // the default. (Per-request LLM latency is bounded by the timeout in
-            // llm.ts, which was the real cause of the long product-page stalls.)
-            maxSteps: briefDriven ? 10 : undefined,
-            // Card data may be present on payment pages → aggressively redact
-            // the screenshot (cover every input/iframe) so a CDP-filled PAN
-            // can never reach the vision model.
-            containsCardData:
-              pageType === "payment-form" || pageType === "payment-gateway",
-          });
-          state.llmCalls++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.log(`  [llm error] ${msg.slice(0, 100)}`);
-          state.llmCalls++;
-        }
-
-        // After LLM on product page, mark selections as applied and try scripted ATC
-        if (pageType === "product" && !briefDriven) {
-          // Mark selections as applied after first LLM attempt
-          if (input.selections && Object.keys(input.selections).length > 0) {
-            state.selectionsApplied = true;
-          }
-
-          // Only try ATC if not already added
-          if (!state.addedToCart) {
-            await page.waitForTimeout(1000);
-            const postLlmAtc =
-              await recClick("buy now") ||
-              await recClick("add to cart") ||
-              await recClick("add to bag") ||
-              await recClick("add to basket") ||
-              await recClick("ship it") ||
-              await recClick("deliver it");
-            if (postLlmAtc) {
-              state.addedToCart = true;
-              console.log(`  [post-llm] scripted add-to-cart succeeded`);
-              // Wait for navigation (buy now) or cart drawer
-              await page.waitForTimeout(3000);
-              // Try checkout buttons in cart drawer
-              const wentToCheckout =
-                await recClick("checkout") ||
-                await recClick("proceed to checkout") ||
-                await recClick("go to checkout") ||
-                await recClick("view bag") ||
-                await recClick("view cart");
-              if (wentToCheckout) console.log(`  [post-llm] navigated to checkout via button`);
-            }
-          }
-        }
-
-        // Check for navigation / confirmation / error after LLM action
-        // Wait longer when item is in cart (Shopify checkout redirects can take 5+ seconds)
-        const postLlmWait = state.addedToCart ? 5000 : 2000;
-        await page.waitForTimeout(postLlmWait);
-        const postLlmType = await detectPageType(page);
-        if (postLlmType === "confirmation") {
-          const data = await extractConfirmationData(page);
-          state.confirmationData = data;
-          state.currentStep = "verify-confirmation";
-
-          try {
-            const newCache = await extractDomainCache(page, domain);
-            saveDomainCache(newCache);
-          } catch { /* best-effort */ }
-
-          await persistSkill(recorder, domain);
-
-          return {
-            success: true,
-            orderNumber: data.orderNumber,
-            finalTotal: data.total,
-            sessionId: session.id,
-            replayUrl: session.replayUrl,
-            durationMs: Date.now() - startMs,
-          };
-        }
-        if (postLlmType === "error") {
-          const errorData = await extractErrorMessage(page);
-          console.log(`  [post-llm error] type=${errorData.type} message=${errorData.message.slice(0, 100)}`);
-
-          try {
-            const newCache = await extractDomainCache(page, domain);
-            saveDomainCache(newCache);
-          } catch { /* best-effort */ }
-
-          return {
-            success: false,
-            sessionId: session.id,
-            replayUrl: session.replayUrl,
-            failedStep: CHECKOUT_STEPS.CHECKOUT_ERROR as CheckoutStep,
-            errorMessage: `${errorData.type}: ${errorData.message}`,
-            durationMs: Date.now() - startMs,
-          };
-        }
-
-        // Reset stall counter after LLM attempt if page changed
-        if (page.url() !== currentUrl) {
-          state.stallCount = 0;
-        }
-      } else if (needsLlm && state.llmCalls >= maxLlm) {
-        console.log(`  [budget exhausted] ${state.llmCalls}/${maxLlm} LLM calls used`);
-        break;
+        /* best-effort */
       }
     }
 
-    // 10. Post-loop: check for confirmation via page text
-    let confirmedViaPageText = false;
-    let finalTotal: string | undefined;
+    tracer?.stepTracker.setStep(cuaStepFor(cua.status));
+    const finalShot = await tracer?.snapshot(page, `cua-final-${cua.status}`);
+    tracer?.record({
+      pageIndex: 0,
+      url: page.url(),
+      pageType: "unknown",
+      action: `cua:${cua.status}`,
+      mode: "llm",
+      loginStrategy: input.loginPlan?.strategy,
+      advanced: cua.status !== "stopped" && cua.status !== "error",
+      llmCalls: cua.toolCalls,
+      screenshot: finalShot,
+      note: cua.note,
+      details: {
+        observed_total: observedTotal ?? undefined,
+        parked_at:
+          cua.status === "parked_payment"
+            ? "payment"
+            : cua.status === "parked_login"
+              ? "login"
+              : undefined,
+      },
+      outcome: cua.status === "error" || cua.status === "stopped" ? undefined : "pass",
+    });
+
     try {
-      const bodyText = await page.evaluate(() => document.body.textContent || "");
-      const confirmation = verifyConfirmationPage(bodyText);
-      confirmedViaPageText = confirmation.isConfirmed;
-      if (!finalTotal) {
-        finalTotal = await extractVisibleTotal(page);
-      }
+      saveDomainCache(await extractDomainCache(page, domain));
     } catch {
-      // Ignore page read errors
+      /* best-effort */
     }
 
-    // 11. Price verification — only for a concrete product with a known price.
-    // A form_flow (a multi-step booking/reservation) has no single fixed product price to compare,
-    // and a no-spend run legitimately ends without a final total, so a "$34 vs
-    // $0.00" mismatch here is noise, not a failure.
-    if (finalTotal && order.payment.price && !briefDriven) {
-      if (!isPriceAcceptable(order.payment.price, finalTotal)) {
-        return {
-          success: false,
-          finalTotal,
-          sessionId: session.id,
-          replayUrl: session.replayUrl,
-          failedStep: CHECKOUT_STEPS.VERIFY_PRICE as CheckoutStep,
-          errorMessage: `Price mismatch: expected ~$${order.payment.price}, found $${finalTotal}`,
-          durationMs: Date.now() - startMs,
-        };
-      }
-    }
-
-    // 12. Save domain cache
-    try {
-      const newCache = await extractDomainCache(page, domain);
-      saveDomainCache(newCache);
-    } catch {
-      // Cache save is best-effort
-    }
-
-    // 13. Final result
-    if (input.dryRun) {
-      // Dry-run success requires reaching at least card fill stage
-      // (or confirmation page). If we stalled on login-gate/cart/product,
-      // the checkout didn't actually complete.
-      const dryRunSuccess = state.cardFilled || confirmedViaPageText;
-      return {
-        success: dryRunSuccess,
-        finalTotal: finalTotal ?? state.confirmationData?.total,
-        sessionId: session.id,
-        replayUrl: session.replayUrl,
-        failedStep: dryRunSuccess ? undefined : state.currentStep,
-        errorMessage: dryRunSuccess
-          ? undefined
-          : `Checkout did not reach payment stage (stopped at ${state.currentStep}, ${state.llmCalls}/${MAX_LLM_CALLS} LLM calls used)`,
-        durationMs: Date.now() - startMs,
-      };
-    }
-
-    // Persist the per-site skill on a text-confirmed success (best-effort).
-    if (confirmedViaPageText) await persistSkill(recorder, domain);
-
-    return {
-      success: confirmedViaPageText,
-      orderNumber: state.confirmationData?.orderNumber,
-      finalTotal: finalTotal ?? state.confirmationData?.total,
+    return mapCuaResult(cua, {
       sessionId: session.id,
       replayUrl: session.replayUrl,
-      failedStep: confirmedViaPageText ? undefined : state.currentStep,
-      errorMessage: confirmedViaPageText
-        ? undefined
-        : `Checkout did not reach confirmation page (stopped at ${state.currentStep}, ${state.llmCalls}/${MAX_LLM_CALLS} LLM calls used)`,
       durationMs: Date.now() - startMs,
-    };
+      observedTotal,
+      page,
+    });
   } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    // A "Target page/context/browser has been closed" error is teardown racing an
+    // in-flight page op (the run was killed/torn down, or the browser crashed) — not
+    // a checkout-logic bug. Tag it distinctly so it's not mistaken for one, and so
+    // run.json doesn't read it as a navigation failure.
+    const closed = /has been closed|Target (page|closed)|browser has been closed/i.test(raw);
     return {
       success: false,
       sessionId: session.id,
       replayUrl: session.replayUrl,
       failedStep: "navigate" as CheckoutStep,
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage: closed ? `session_closed: ${raw}` : raw,
       durationMs: Date.now() - startMs,
     };
   } finally {

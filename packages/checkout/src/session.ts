@@ -61,6 +61,46 @@ export async function createSession(
 
   const headless = resolveHeadless(options);
 
+  // Reuse a persisted browser profile when BROWSER_PROFILE_DIR is set. Some sites
+  // bind a logged-in session to the browser PROFILE (localStorage/IndexedDB +
+  // cookies), not portable cookies alone — so a freshly-seeded context reads as
+  // logged-out. Pointing at a profile that a human already authenticated lets the
+  // checkout run as that user. Generic; the dir is operator-provided, not per-site.
+  const profileDir = process.env.BROWSER_PROFILE_DIR;
+  if (profileDir) {
+    const context = await chromium
+      .launchPersistentContext(profileDir, {
+        channel: "chrome",
+        headless,
+        args: ["--disable-blink-features=AutomationControlled"],
+        viewport: { width: 1280, height: 900 },
+      })
+      .catch(() =>
+        chromium.launchPersistentContext(profileDir, {
+          headless,
+          args: ["--disable-blink-features=AutomationControlled"],
+          viewport: { width: 1280, height: 900 },
+        }),
+      );
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    });
+    const page = context.pages()[0] ?? (await context.newPage());
+    page.on("dialog", (d) => {
+      void d.accept().catch(() => {});
+    });
+    sessionCounter += 1;
+    const browser = context.browser();
+    return {
+      id: `profile_${process.pid}_${sessionCounter}`,
+      replayUrl: "",
+      browser: browser as Browser,
+      context,
+      page,
+      runtime: "local",
+    };
+  }
+
   // Minimal, generic anti-automation hardening. Many storefronts (esp. Shopify)
   // serve a blank page to obviously-automated Chrome. These are the standard,
   // site-agnostic mitigations — they reduce trivial detection but do NOT defeat

@@ -88,8 +88,11 @@ pnpm test --filter @tomo/<pkg> # one package
 packages/
   core/           types, fees, JSON store (~/.tomo), config, error hierarchy
   crawling/       product discovery: Exa search + Playwright fetch + OpenRouter extraction
-  checkout/       browser checkout: Playwright session, OpenRouter agent loop, CDP card-fill,
-                  confirmation detection, AGENTCARD funding (agentcard.ts), credentials
+  checkout/       browser checkout: Playwright session, tool-calling Computer-Use Agent
+                  (cua/loop.ts drives the page via a strong vision model; cua/tools.ts is the
+                  internal tool registry — click/type/scroll + login/fill_card/fill_otp/
+                  fill_shipping), CDP card-fill, confirmation detection, AGENTCARD funding,
+                  credentials
   checkout-http/  HTTP checkout engine (deferred; browser path is the v1 path)
   identity/       agent identities + connected accounts: encrypted vault, Composio stub,
                   AgentMail inboxes, LLM login-strategy resolver (agent vs user account)

@@ -3,7 +3,7 @@ export { runCheckout, CHECKOUT_STEPS } from "./task.js";
 export type { CheckoutResult, CheckoutInput, CheckoutStep, CheckoutCheckpoints } from "./task.js";
 
 // ---- CAPTCHA handling ----
-export { waitForCaptchaSolve } from "./captcha.js";
+export { waitForCaptchaSolve, isChallengePage, waitForHumanToSolveChallenge } from "./captcha.js";
 
 // ---- Price discovery ----
 export {
@@ -84,16 +84,38 @@ export type { AgentcardPreflight } from "./agentcard.js";
 export { playwrightAct } from "./act.js";
 export type { ActOptions } from "./act.js";
 
+// ---- Computer-Use Agent (tool-calling CUA loop + tool registry) ----
+export { runCuaTask, SYSTEM as CUA_SYSTEM } from "./cua/loop.js";
+export type { CuaParams, CuaResult, Observation } from "./cua/loop.js";
+export { buildToolset } from "./cua/tools.js";
+export type {
+  CuaTool,
+  ToolContext,
+  ToolResult,
+  CuaStatus,
+  FinishResult,
+  ShippingData as CuaShippingData,
+} from "./cua/tools.js";
+
 // ---- LLM (OpenRouter default; Gemini when LLM_PROVIDER=gemini) ----
 export {
   complete,
   completePrompt,
   completeJson,
+  completeWithTools,
+  parseToolCompletion,
+  parseToolArgs,
   parseJsonFromText,
   getAgentModel,
   getExtractModel,
 } from "./llm.js";
-export type { ChatMessage, CompleteOptions } from "./llm.js";
+export type {
+  ChatMessage,
+  CompleteOptions,
+  ToolDef,
+  ToolCall,
+  ToolCompletion,
+} from "./llm.js";
 
 // ---- Gemini in-checkout agent (production-recommended; stubbed until wired) ----
 export {

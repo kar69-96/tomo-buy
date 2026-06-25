@@ -52,10 +52,43 @@ export interface ImagePart {
 
 export type ContentPart = TextPart | ImagePart;
 
+/**
+ * One tool call the model asked for. `arguments` is the raw JSON string the
+ * provider returned; `parseToolArgs` turns it into an object. NEVER place a
+ * secret in a tool call's arguments or result — see the prime directive.
+ */
+export interface ToolCall {
+  id: string;
+  name: string;
+  /** Raw JSON-encoded arguments string from the provider. */
+  arguments: string;
+}
+
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   /** Plain text, or a multimodal part list (text + redacted images). */
   content: string | ContentPart[];
+  /** Assistant turn: the tool calls the model emitted (OpenAI `tool_calls`). */
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+  /** Tool turn: which assistant tool call this message answers. */
+  tool_call_id?: string;
+}
+
+/** A tool the model may call. `parameters` is a JSON Schema object. */
+export interface ToolDef {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/** Result of a tool-calling completion: free text and/or a batch of tool calls. */
+export interface ToolCompletion {
+  text: string;
+  toolCalls: ToolCall[];
 }
 
 export interface CompleteOptions {
@@ -146,6 +179,130 @@ export async function complete(
     throw new Error("OpenRouter returned no content");
   }
   return content;
+}
+
+/**
+ * Tool-calling completion. Posts `messages` plus the available `tools` in the
+ * OpenAI-compatible function-calling format (which OpenRouter normalizes for
+ * Claude and other providers), and returns the assistant's free text plus any
+ * tool calls it emitted.
+ *
+ * SECURITY: the caller must never put a card number, password, session token,
+ * or OTP into a message or tool result — only sanitized page state, %var%
+ * names, and non-secret tool outputs. Redacted screenshots attach as image
+ * parts on the messages exactly as in `complete()`.
+ */
+export async function completeWithTools(
+  messages: ChatMessage[],
+  tools: ToolDef[],
+  options: CompleteOptions = {},
+): Promise<ToolCompletion> {
+  const apiKey = getOpenRouterKey();
+  const model = options.model ?? getAgentModel();
+
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: options.temperature ?? 0,
+    tools: tools.map((t) => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
+    })),
+    tool_choice: "auto",
+  };
+  if (options.maxTokens) body.max_tokens = options.maxTokens;
+
+  const timeoutMs = resolveTimeoutMs(options);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://github.com/kar69-96/agentbuy",
+        "X-Title": "tomo-buy",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`OpenRouter request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`OpenRouter ${res.status}: ${errBody.slice(0, 300)}`);
+  }
+
+  const data = (await res.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        tool_calls?: Array<{
+          id?: string;
+          function?: { name?: string; arguments?: string };
+        }>;
+      };
+    }>;
+  };
+  const msg = data.choices?.[0]?.message;
+  return parseToolCompletion(msg);
+}
+
+/**
+ * Map a raw OpenAI-style assistant message into a {@link ToolCompletion}. Pure
+ * and exported so the parsing is unit-testable without a network call. Tolerates
+ * a missing id/name (skips malformed calls) and a null content.
+ */
+export function parseToolCompletion(msg: unknown): ToolCompletion {
+  const m = (msg ?? {}) as {
+    content?: string | null;
+    tool_calls?: Array<{
+      id?: string;
+      function?: { name?: string; arguments?: string };
+    }>;
+  };
+  const text = typeof m.content === "string" ? m.content : "";
+  const toolCalls: ToolCall[] = [];
+  for (const tc of m.tool_calls ?? []) {
+    const name = tc.function?.name;
+    if (!name) continue;
+    toolCalls.push({
+      id: tc.id ?? `call_${toolCalls.length}`,
+      name,
+      arguments: tc.function?.arguments ?? "{}",
+    });
+  }
+  return { text, toolCalls };
+}
+
+/**
+ * Parse a tool call's raw `arguments` JSON into an object. Returns `{}` on any
+ * malformed/empty payload (weaker models occasionally emit invalid JSON), so a
+ * tool executor always receives an object.
+ */
+export function parseToolArgs(call: ToolCall): Record<string, unknown> {
+  const raw = (call.arguments ?? "").trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Convenience: system + user → text. Attaches redacted images when provided. */

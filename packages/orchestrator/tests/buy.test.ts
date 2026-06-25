@@ -11,7 +11,7 @@ vi.mock("@tomo/checkout", () => ({
 }));
 
 import { discoverPrice } from "@tomo/checkout";
-import { buy } from "../src/buy.js";
+import { buy, normalizeSelections } from "../src/buy.js";
 
 const mockedDiscoverPrice = vi.mocked(discoverPrice);
 
@@ -153,16 +153,21 @@ describe("buy", () => {
     );
   });
 
-  it("buy with blank selection value throws INVALID_SELECTION", async () => {
-    await expect(
-      buy({
-        url: "https://shop.example.com/widget",
-        shipping: testShipping,
-        selections: { Color: "" },
-      }),
-    ).rejects.toThrow(
-      expect.objectContaining({ code: "INVALID_SELECTION" }),
-    );
+  it("buy drops blank selection values instead of throwing", async () => {
+    mockedDiscoverPrice.mockResolvedValue({
+      name: "Sneaker",
+      price: "19.99",
+      method: "scrape",
+    });
+
+    const order = await buy({
+      url: "https://shop.example.com/sneaker",
+      shipping: testShipping,
+      selections: { Size: "10", Color: "" },
+    });
+
+    // Blank "Color" is a no-choice option: dropped, not fatal.
+    expect(order.selections).toEqual({ Size: "10" });
   });
 
   it("buy high-price product succeeds (no price cap)", async () => {
@@ -179,5 +184,46 @@ describe("buy", () => {
 
     expect(order.payment.price).toBe("100.00");
     expect(order.payment.fee).toBe("2.00");
+  });
+});
+
+describe("normalizeSelections", () => {
+  it("drops a blank value and keeps the trimmed non-blank pair", () => {
+    expect(normalizeSelections({ size: "10", color: "" })).toEqual({
+      size: "10",
+    });
+  });
+
+  it("drops whitespace-only values", () => {
+    expect(normalizeSelections({ size: "10", color: "  " })).toEqual({
+      size: "10",
+    });
+  });
+
+  it("trims kept keys and values", () => {
+    expect(normalizeSelections({ "  size  ": "  10  " })).toEqual({
+      size: "10",
+    });
+  });
+
+  it("throws INVALID_SELECTION for a non-string value", () => {
+    expect(() =>
+      // @ts-expect-error testing runtime guard against malformed input
+      normalizeSelections({ size: 10 }),
+    ).toThrow(expect.objectContaining({ code: "INVALID_SELECTION" }));
+  });
+
+  it("returns an empty object when all selections are blank", () => {
+    expect(normalizeSelections({ size: "", color: "   " })).toEqual({});
+  });
+
+  it("returns an empty object for undefined input", () => {
+    expect(normalizeSelections(undefined)).toEqual({});
+  });
+
+  it("does not mutate the input object", () => {
+    const input = { size: "10", color: "" };
+    normalizeSelections(input);
+    expect(input).toEqual({ size: "10", color: "" });
   });
 });
