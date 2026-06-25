@@ -1,5 +1,15 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runCuaTask } from "../src/cua/loop.js";
+
+// These specs exercise the tool-calling loop with an injected model/observe.
+// runCuaTask routes to the native Anthropic path when ANTHROPIC_API_KEY is set
+// (vitest.config loads .env), so pin tool-calling mode for this suite.
+beforeEach(() => {
+  vi.stubEnv("CUA_MODE", "tool-calling");
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 import type { Observation } from "../src/cua/loop.js";
 import type { CuaTool, ToolContext } from "../src/cua/tools.js";
 import type { ToolCompletion, ChatMessage, ToolDef } from "../src/llm.js";
@@ -99,7 +109,7 @@ describe("runCuaTask — control flow", () => {
     });
     expect(res.status).toBe("stopped");
     expect(res.note).toBe("no progress");
-    expect(res.rounds).toBe(4); // STALL_LIMIT
+    expect(res.rounds).toBe(6); // STALL_LIMIT
   });
 
   it("stops when the model issues no tool calls (idle)", async () => {
@@ -172,6 +182,33 @@ describe("runCuaTask — control flow", () => {
     });
     expect(res.status).toBe("stopped");
     // The 3rd model call must have received the forceful corrective in a user turn.
+    const third = model.calls[2];
+    const corrective = third.find(
+      (m) => m.role === "user" && JSON.stringify(m.content).includes("keeps failing"),
+    );
+    expect(corrective).toBeTruthy();
+  });
+
+  it("groups jittered coordinate clicks: near-identical x,y still trips the vision corrective", async () => {
+    const page = fakePage({ url: "http://t/", elCount: 100 });
+    // A vision click that never advances (ok:false), then finish.
+    const deadClick = tool("click", async () => ({ ok: false, text: "click: no visible change." }));
+    const finishTool = tool("finish", async () => ({ text: "f", finish: { status: "stopped" as const } }));
+    // Two clicks 1px apart — DIFFERENT raw args, but quantized to the same target.
+    const model = scriptModel([
+      { text: "", toolCalls: [call("click", '{"x":818,"y":438}')] },
+      { text: "", toolCalls: [call("click", '{"x":818,"y":439}')] },
+      { text: "", toolCalls: [call("finish")] },
+    ]);
+    const res = await runCuaTask({
+      objective: "x",
+      tools: [deadClick, finishTool],
+      toolContext: ctx(page),
+      model: model.fn,
+      observe: async () => obs("http://t/", 100),
+    });
+    expect(res.status).toBe("stopped");
+    // The 3rd model call must have received the corrective steering it to vision.
     const third = model.calls[2];
     const corrective = third.find(
       (m) => m.role === "user" && JSON.stringify(m.content).includes("keeps failing"),

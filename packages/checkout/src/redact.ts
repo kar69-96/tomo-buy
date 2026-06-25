@@ -156,7 +156,12 @@ export async function captureRedactedScreenshot(
       },
     );
 
-    const buf = await page.screenshot({ type: "jpeg", quality });
+    // scale:"css" renders one image pixel per CSS pixel regardless of the
+    // display's devicePixelRatio. Without it, a Retina/real-Chrome session (DPR=2,
+    // common on the CDP path) produces a 2x image while page.mouse and
+    // elementsFromPoint use CSS px — so the model's coordinate clicks land at half
+    // position and hit nothing. On a DPR=1 display this is a no-op.
+    const buf = await page.screenshot({ type: "jpeg", quality, scale: "css" });
     dumpForDebug(buf, aggressive);
     return `data:image/jpeg;base64,${buf.toString("base64")}`;
   } catch {

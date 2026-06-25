@@ -37,6 +37,14 @@ export interface BrowserSession {
   page: Page;
   /** Which runtime backs this session (defaults to "local"). */
   runtime?: BrowserRuntime;
+  /**
+   * True when attached to an already-running Chrome over CDP (BROWSER_CDP_URL).
+   * On teardown we close ONLY the page we opened — never the shared default
+   * context — and disconnect, so our automation tabs don't accumulate in the
+   * user's browser (a pile of leaked tabs makes the next connectOverCDP's
+   * target attach time out).
+   */
+  cdp?: boolean;
 }
 
 // Back-compat alias for call sites that referenced the old name.
@@ -78,6 +86,7 @@ export async function createSession(
       context: ctx,
       page,
       runtime: "local",
+      cdp: true,
     };
   }
 
@@ -178,6 +187,23 @@ export async function destroySession(
   session: BrowserSession | undefined,
 ): Promise<void> {
   if (!session) return;
+  if (session.cdp) {
+    // CDP-attached: the context is the user's shared default context — closing it
+    // would nuke their real tabs, and it leaves OUR page open anyway. Close just
+    // the page we opened, then disconnect (Chrome keeps running). This prevents
+    // tabs from piling up across runs and choking the next connectOverCDP.
+    try {
+      await session.page.close();
+    } catch {
+      // never throw from cleanup
+    }
+    try {
+      await session.browser.close();
+    } catch {
+      // never throw from cleanup
+    }
+    return;
+  }
   try {
     await session.context.close();
   } catch {

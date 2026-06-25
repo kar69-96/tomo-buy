@@ -82,7 +82,9 @@ describe("type — secret boundary", () => {
 describe("click — argument validation", () => {
   it("asks for ref or coordinates when given neither", async () => {
     const res = await tool("click").run(ctx(), {});
-    expect(res.text).toMatch(/either a ref or x,y/);
+    expect(res.text).toMatch(/ref/);
+    expect(res.text).toMatch(/x.*y|coordinates/);
+    expect(res.ok).toBe(false);
   });
 });
 

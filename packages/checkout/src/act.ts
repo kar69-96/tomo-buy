@@ -104,6 +104,17 @@ export interface ActOptions {
 export const REF_ATTR = "data-tomo-ref";
 
 export async function snapshot(page: Page): Promise<SnapshotElement[]> {
+  try {
+    return await snapshotInner(page);
+  } catch {
+    // A navigation in flight destroys the execution context mid-evaluate. Degrade
+    // to "no elements" (the caller falls back to the screenshot) rather than throw,
+    // matching pageSignature's swallow-and-default contract.
+    return [];
+  }
+}
+
+async function snapshotInner(page: Page): Promise<SnapshotElement[]> {
   return (await page.evaluate((attr: string) => {
     const semanticSel =
       'a, button, input, select, textarea, [role="button"], [role="link"], ' +
@@ -173,6 +184,25 @@ export async function snapshot(page: Page): Promise<SnapshotElement[]> {
     }
     return out;
   }, REF_ATTR)) as SnapshotElement[];
+}
+
+/**
+ * The CSS-pixel viewport bounds to tell the model (it must give click x,y within
+ * these). page.viewportSize() returns null for a CDP-attached page with no
+ * emulated viewport, so fall back to the live window inner size. Matches the
+ * scale:"css" screenshot, so reported bounds == image px == mouse px.
+ */
+export async function viewportDims(page: Page): Promise<{ width: number; height: number }> {
+  const vp = page.viewportSize();
+  if (vp && vp.width > 0 && vp.height > 0) return vp;
+  try {
+    return (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }))) as { width: number; height: number };
+  } catch {
+    return { width: 0, height: 0 };
+  }
 }
 
 export function renderElements(els: SnapshotElement[]): string {
@@ -266,8 +296,8 @@ async function decideSteps(
     ? `Result of your previous actions: ${ctx.priorOutcome}\n\n`
     : "";
 
-  const vp = page.viewportSize();
-  const dims = vp ? `${vp.width}x${vp.height}` : "the image's";
+  const vp = await viewportDims(page);
+  const dims = vp.width > 0 ? `${vp.width}x${vp.height}` : "the image's";
   const user = `Instruction: ${instruction}
 
 ${reflection}Screenshot size: ${dims} pixels. For a click on something visible but not in the list below, return its center as "x"/"y" within these bounds.

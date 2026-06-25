@@ -113,6 +113,9 @@ function num(v: unknown): number | undefined {
 function str(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
+function capitalize(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
 
 /** Run a click and report whether the page meaningfully advanced (model feedback). */
 async function reportAdvance(
@@ -124,9 +127,22 @@ async function reportAdvance(
   const landed = await act();
   await ctx.page.waitForTimeout(600);
   const moved = advanced(before, await pageSignature(ctx.page));
-  if (!landed) return { ok: false, text: `${label}: did not land (target not found/covered/off-screen). Re-aim or try another control.` };
-  // "Landed but no visible change" is still unproductive if repeated — report ok=moved.
-  return { ok: moved, text: moved ? `${label}: done — the page advanced.` : `${label}: done but the page did NOT visibly change.` };
+  // For a ref click that won't take, point the model at vision: the ref is likely
+  // stale/mis-mapped, so the recovery is to click the visible control by x,y.
+  const isRefClick = label.startsWith("click #");
+  const reaim = isRefClick
+    ? "click the control by its CENTER x,y pixel coordinates from the screenshot instead — trust the screenshot over the element list"
+    : "re-aim at the exact center of the control you see, or try another control";
+  if (!landed) return { ok: false, text: `${label}: did not land (target not found/covered/off-screen). ${capitalize(reaim)}.` };
+  if (moved) return { ok: true, text: `${label}: done — the page advanced.` };
+  // Landed but no MAJOR page change. Many real actions (Add to Cart, toggles,
+  // quantity changes) update IN PLACE without tripping our page-advance signal —
+  // so defer to the model's vision: if the screenshot shows it already worked,
+  // move on; only treat it as a dead action (ok:false → repeat guard) otherwise.
+  return {
+    ok: false,
+    text: `${label}: the click registered but I saw no major page change. If the SCREENSHOT shows it already took effect (item added to cart, a count/panel/section updated, a field toggled), do NOT repeat it — go to the NEXT step (e.g. open the cart and click Checkout). If nothing changed, ${reaim}.`,
+  };
 }
 
 // ---- browser tools ----
@@ -155,7 +171,10 @@ const clickTool: CuaTool = {
     if (ref !== undefined) {
       return reportAdvance(ctx, `click #${ref}`, () => clickRef(ctx.page, ref, ctx.log));
     }
-    return { text: "click: provide either a ref or x,y coordinates." };
+    return {
+      ok: false,
+      text: "click: you gave no target. Pass a `ref` from the element list, OR `x` and `y` pixel coordinates (the CENTER of the control you see in the screenshot — e.g. the Checkout button).",
+    };
   },
 };
 
