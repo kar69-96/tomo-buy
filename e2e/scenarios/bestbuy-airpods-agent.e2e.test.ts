@@ -13,8 +13,10 @@
  *   E2E_LIVE=1 E2E_BIGBOX_URL=<current-bestbuy-airpods-url> \
  *     pnpm vitest run e2e/scenarios/bestbuy-airpods-agent.e2e.test.ts
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { setupScenarioEnv, driveRun, summarize } from "../harness.js";
+import { deleteSiteAccount } from "@tomo/core";
+import { getOrCreateAgentIdentity } from "@tomo/identity";
 
 const LIVE = process.env.E2E_LIVE === "1";
 
@@ -25,6 +27,12 @@ const AIRPODS_URL =
 const TASK = `Create an account and buy this item: ${AIRPODS_URL}`;
 
 describe.skipIf(!LIVE)("Best Buy AirPods — agent account (real browser, no spend)", () => {
+  beforeEach(async () => {
+    // Ensure a clean slate so the resolver always gates on create_account.
+    const identity = await getOrCreateAgentIdentity();
+    await deleteSiteAccount(identity.identity_id, "bestbuy.com");
+  });
+
   it("creates a throwaway account and parks at payment", async () => {
     const traceDir = setupScenarioEnv("bestbuy-airpods-agent");
 

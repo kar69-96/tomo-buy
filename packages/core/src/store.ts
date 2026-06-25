@@ -244,6 +244,16 @@ export function createSiteAccount(account: SiteAccount): Promise<void> {
   return siteAccountsQueue;
 }
 
+export function deleteSiteAccount(identityId: string, domain: string): Promise<void> {
+  siteAccountsQueue = siteAccountsQueue.then(() => {
+    const accounts = siteAccountsStore().filter(
+      (a) => !(a.identity_id === identityId && a.domain === domain),
+    );
+    writeJsonFile("site-accounts.json", { site_accounts: accounts });
+  });
+  return siteAccountsQueue;
+}
+
 // ---- Planner runs ----
 
 const runs = createCollection<Run>("runs.json", "runs", "run_id");
