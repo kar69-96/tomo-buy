@@ -352,7 +352,10 @@ async function stepPurchase(
 
   // First entry: get a quote and pause for human confirmation.
   if (!ctx.purchase) {
-    const order = await buy({ url, selections, allowUnpriced: briefDriven });
+    // allowUnpriced: in no-spend (dry-run) mode the checkout reads the actual total
+    // from the payment page, so a failed upfront discovery is safe to degrade past.
+    const dryRun = process.env.DRY_RUN_NO_SPEND === "1";
+    const order = await buy({ url, selections, allowUnpriced: briefDriven || dryRun });
     const breakdown = buildBreakdown(order.payment);
     ctx.purchase = {
       order_id: order.order_id,

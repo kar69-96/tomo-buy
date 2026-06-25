@@ -5,7 +5,7 @@ import {
   TomoError,
   ErrorCodes,
 } from "@tomo/core";
-import { discoverViaFirecrawl } from "@tomo/crawling";
+import { discoverViaFirecrawl, discoverViaExa } from "@tomo/crawling";
 import type { FullDiscoveryResult } from "@tomo/crawling";
 import { createSession, destroySession } from "./session.js";
 import { completeJson } from "./llm.js";
@@ -466,6 +466,17 @@ export async function discoverPrice(
   const scraped = await scrapePrice(url);
   if (scraped) return scraped;
 
+  // Tier 1.5: Exa livecrawl — bypasses bot defenses that block headless Chrome
+  const exaResult = await discoverViaExa(url);
+  if (exaResult) {
+    return {
+      name: exaResult.name,
+      price: exaResult.price,
+      method: "browserbase_cart",
+      image_url: exaResult.image_url,
+    };
+  }
+
   // Tier 2: Local Playwright render + OpenRouter extraction
   const browsered = await discoverViaBrowser(url);
   if (browsered) {
@@ -674,6 +685,10 @@ export async function discoverProduct(
       options: scraped.options,
     };
   }
+
+  // Tier 2.5: Exa livecrawl — bypasses bot defenses that block headless Chrome
+  const exaResult = await discoverViaExa(url);
+  if (exaResult) return exaResult;
 
   // Tier 3: Local Playwright render + OpenRouter extract
   const browsered = await discoverViaBrowser(url);

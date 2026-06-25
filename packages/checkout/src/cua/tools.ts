@@ -427,3 +427,19 @@ export function buildToolset(_ctx: Pick<ToolContext, "dryRun">): CuaTool[] {
     finishTool,
   ];
 }
+
+/**
+ * Capability-only toolset for the native computer-use loop. Browser actions
+ * (click/type/scroll/press/select/dismiss_popups) are handled by the computer
+ * tool; only server-side capability tools are exposed here.
+ */
+export function buildCapabilityToolset(_ctx: Pick<ToolContext, "dryRun">): CuaTool[] {
+  return [
+    loginTool,
+    fillOtpTool,
+    fillCardTool,
+    fillShippingTool,
+    readTotalTool,
+    finishTool,
+  ];
+}

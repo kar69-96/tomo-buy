@@ -59,6 +59,28 @@ export async function createSession(
     return { ...session, runtime: "browserbase" };
   }
 
+  // Connect to an already-running Chrome via CDP when BROWSER_CDP_URL is set.
+  // The user starts Chrome with --remote-debugging-port=9222 and we attach to it.
+  // This is the real browser with real cookies/fingerprints — bypasses bot detection.
+  const cdpUrl = process.env.BROWSER_CDP_URL;
+  if (cdpUrl) {
+    const browser = await chromium.connectOverCDP(cdpUrl);
+    const ctx = browser.contexts()[0] ?? (await browser.newContext());
+    const page = await ctx.newPage();
+    page.on("dialog", (d) => {
+      void d.accept().catch(() => {});
+    });
+    sessionCounter += 1;
+    return {
+      id: `cdp_${process.pid}_${sessionCounter}`,
+      replayUrl: "",
+      browser,
+      context: ctx,
+      page,
+      runtime: "local",
+    };
+  }
+
   const headless = resolveHeadless(options);
 
   // Reuse a persisted browser profile when BROWSER_PROFILE_DIR is set. Some sites

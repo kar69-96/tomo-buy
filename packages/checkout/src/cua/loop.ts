@@ -25,6 +25,7 @@ import {
 import { snapshot, renderElements, pageSignature, advanced, scrollPage, type PageSignature } from "../act.js";
 import { captureRedactedScreenshot } from "../redact.js";
 import type { CuaTool, ToolContext, CuaStatus, FinishResult } from "./tools.js";
+import { runCuaTaskNative } from "./computer-use-loop.js";
 
 export const SYSTEM = `You are a careful, persistent computer-use agent operating a real web browser to accomplish ONE objective for a user. You see the live page as a SCREENSHOT (the source of truth) plus a numbered list of SOME interactive elements, and you act ONLY by calling tools.
 
@@ -144,6 +145,12 @@ function pruneOldImages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 export async function runCuaTask(params: CuaParams): Promise<CuaResult> {
+  // Native Anthropic computer-use: better visual reasoning, no DOM-ref confusion.
+  // Activated when ANTHROPIC_API_KEY is set and CUA_MODE is not "tool-calling".
+  if (process.env.ANTHROPIC_API_KEY && process.env.CUA_MODE !== "tool-calling") {
+    return runCuaTaskNative(params);
+  }
+
   const log = params.log ?? (() => {});
   const page = params.toolContext.page;
   const piiValues = params.piiValues ?? [];

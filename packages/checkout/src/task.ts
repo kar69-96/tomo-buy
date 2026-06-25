@@ -246,8 +246,15 @@ function buildPurchaseObjective(input: CheckoutInput): string {
   const p = input.order.product;
   const dryRun = input.dryRun;
   const selections = input.selections;
+  // When the product name is unknown (unpriced/failed discovery), say "item already
+  // loaded" rather than embedding the raw URL — the model would otherwise type the
+  // URL into a search bar instead of acting on the already-open page.
+  const productLabel =
+    p.name && p.name !== extractDomain(p.url)
+      ? p.name
+      : "the item already loaded in the browser";
   const lines: string[] = [
-    `Objective: purchase this product and reach ${dryRun ? "the filled payment page" : "order confirmation"}: ${p.name ?? p.url} — ${p.url}.`,
+    `Objective: purchase this product and reach ${dryRun ? "the filled payment page" : "order confirmation"}: ${productLabel}.`,
   ];
   if (selections && Object.keys(selections).length > 0) {
     lines.push(
