@@ -34,6 +34,11 @@ import {
 } from "@tomo/identity";
 import type { LoginPlan, SessionCookie } from "@tomo/checkout";
 import { plan as makePlan } from "./plan.js";
+import {
+  searchProducts,
+  comparePrices,
+  isBrowseAvailable,
+} from "@tomo/browse-skills";
 
 // ---- Execution context (persisted; secrets excluded) ----
 
@@ -61,6 +66,8 @@ interface RunContext {
   url?: string;
   domain?: string;
   discovery?: Record<string, unknown>;
+  search?: Record<string, unknown>;
+  price_comparison?: Record<string, unknown>;
   login?: LoginState;
   purchase?: PurchaseState;
   receipt?: Record<string, unknown>;
@@ -218,7 +225,13 @@ async function advance(run: Run): Promise<RunOutcome> {
       cursor += 1;
     }
 
-    const result = { ...ctx.discovery, receipt: ctx.receipt, parked: ctx.purchase?.parked };
+    const result = {
+      ...ctx.discovery,
+      search: ctx.search,
+      price_comparison: ctx.price_comparison,
+      receipt: ctx.receipt,
+      parked: ctx.purchase?.parked,
+    };
     await updateRun(run.run_id, {
       status: "completed",
       cursor,
@@ -265,6 +278,10 @@ async function runStep(
       return stepDiscover(step, ctx);
     case "login":
       return stepLogin(step, ctx);
+    case "search":
+      return stepSearch(step, ctx);
+    case "compare_prices":
+      return stepComparePrices(step, ctx);
     case "purchase":
       return stepPurchase(step, ctx, brief);
     default:
@@ -297,6 +314,30 @@ async function stepDiscover(step: PlanStep, ctx: RunContext): Promise<undefined>
       search_metadata: res.search_metadata,
     };
   }
+  return undefined;
+}
+
+async function stepSearch(step: PlanStep, ctx: RunContext): Promise<undefined> {
+  const queryText = (step.args.query as string | undefined) ?? ctx.task;
+  const result = await searchProducts(queryText);
+  ctx.search = {
+    query: queryText,
+    results: result.results,
+    source_breakdown: result.source_breakdown,
+    browse_available: isBrowseAvailable(),
+  };
+  return undefined;
+}
+
+async function stepComparePrices(step: PlanStep, ctx: RunContext): Promise<undefined> {
+  const queryText = (step.args.query as string | undefined) ?? ctx.task;
+  const result = await comparePrices(queryText);
+  ctx.price_comparison = {
+    query: queryText,
+    asin: result.asin,
+    comparisons: result.comparisons,
+    browse_available: isBrowseAvailable(),
+  };
   return undefined;
 }
 

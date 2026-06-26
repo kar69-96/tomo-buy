@@ -16,6 +16,7 @@
 import type { Page } from "playwright";
 import {
   completeWithTools,
+  completeWithToolsAnthropic,
   parseToolArgs,
   type ChatMessage,
   type ContentPart,
@@ -199,9 +200,10 @@ function pruneOldImages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 export async function runCuaTask(params: CuaParams): Promise<CuaResult> {
-  // Native Anthropic computer-use: better visual reasoning, no DOM-ref confusion.
-  // Activated when ANTHROPIC_API_KEY is set and CUA_MODE is not "tool-calling".
-  if (process.env.ANTHROPIC_API_KEY && process.env.CUA_MODE !== "tool-calling") {
+  // Native Anthropic computer-use (pixel-precise; opt-in only — CUA_MODE=computer-use).
+  // Current Claude 4.x models do not support computer_20250124; activate only when
+  // the caller explicitly requests it with a model that does.
+  if (process.env.CUA_MODE === "computer-use") {
     return runCuaTaskNative(params);
   }
 
@@ -209,7 +211,12 @@ export async function runCuaTask(params: CuaParams): Promise<CuaResult> {
   const page = params.toolContext.page;
   const piiValues = params.piiValues ?? [];
   const maxToolCalls = params.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
-  const model = params.model ?? ((m, t, o) => completeWithTools(m, t, o));
+  // Default: Anthropic SDK when ANTHROPIC_API_KEY is set; fall back to OpenRouter.
+  const model = params.model ?? (
+    process.env.ANTHROPIC_API_KEY
+      ? (m: ChatMessage[], t: ToolDef[], o: Record<string, unknown>) => completeWithToolsAnthropic(m, t, o as Parameters<typeof completeWithToolsAnthropic>[2])
+      : (m: ChatMessage[], t: ToolDef[], o: Record<string, unknown>) => completeWithTools(m, t, o as Parameters<typeof completeWithTools>[2])
+  );
   const observe = params.observe ?? defaultObserve;
   const toolDefs = params.tools.map((t) => t.def);
   const byName = new Map(params.tools.map((t) => [t.def.name, t] as const));

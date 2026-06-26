@@ -28,6 +28,18 @@ export const CAPABILITIES: Capability[] = [
     inputs: "domain (string, inferred from the target URL)",
   },
   {
+    name: "search",
+    description:
+      "Search for products across Amazon and eBay simultaneously using browse.sh skills. Returns ranked listings with prices and direct purchase URLs. Use when the human wants to compare products across marketplaces before choosing one to buy.",
+    inputs: "query (string)",
+  },
+  {
+    name: "compare_prices",
+    description:
+      "Compare prices for a product across Amazon global storefronts (US, UK, DE, JP, etc.) using browse.sh skills. Returns each storefront's price and URL. Use after a search step when the human wants the cheapest available region.",
+    inputs: "query (string)",
+  },
+  {
     name: "purchase",
     description:
       "Buy a product at a URL: get a quote (price + shipping + tax + fee), confirm with the human, then complete checkout funded by a single-use card. Spends real money.",

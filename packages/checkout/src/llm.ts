@@ -1,14 +1,20 @@
 /**
- * OpenRouter chat client (fetch-based, no SDK dependency).
+ * LLM clients for checkout and discovery.
  *
- * Every model call in checkout and discovery goes through `complete()`. The
- * in-checkout browser agent can be routed to Google Gemini (the production-
- * recommended provider) by setting LLM_PROVIDER=gemini + GEMINI_API_KEY; the
- * default is OpenRouter so the repo runs out of the box. Card numbers MUST
- * NEVER be passed to these functions — only sanitized page text, instructions,
- * and %var% placeholders.
+ * completeWithToolsAnthropic — Anthropic SDK (default when ANTHROPIC_API_KEY is set).
+ * completeWithTools           — OpenRouter fallback (OpenAI-compat format).
+ * geminiComplete              — Google Gemini (LLM_PROVIDER=gemini).
+ *
+ * SECURITY: card numbers, passwords, and session tokens MUST NEVER be passed to
+ * any of these functions — only sanitized page text and %var% placeholders.
  */
 
+import Anthropic from "@anthropic-ai/sdk";
+import type {
+  MessageParam,
+  Tool,
+  ContentBlockParam,
+} from "@anthropic-ai/sdk/resources/messages/messages";
 import { getLlmProvider } from "@tomo/core";
 import { geminiComplete } from "./gemini.js";
 
@@ -288,6 +294,141 @@ export function parseToolCompletion(msg: unknown): ToolCompletion {
   }
   return { text, toolCalls };
 }
+
+// ---- Anthropic-native tool-calling ----------------------------------------
+
+/** Translate one OpenAI-format ChatMessage into Anthropic MessageParam(s). */
+function toAnthropicMessages(messages: ChatMessage[]): { system: string; msgs: MessageParam[] } {
+  let system = "";
+  const msgs: MessageParam[] = [];
+
+  for (const m of messages) {
+    if (m.role === "system") {
+      system += (system ? "\n" : "") + (typeof m.content === "string" ? m.content : "");
+      continue;
+    }
+
+    if (m.role === "tool") {
+      // Tool result — must be merged into the preceding user message or a new one.
+      const result: ContentBlockParam = {
+        type: "tool_result",
+        tool_use_id: m.tool_call_id ?? "",
+        content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      };
+      const last = msgs[msgs.length - 1];
+      if (last?.role === "user" && Array.isArray(last.content)) {
+        (last.content as ContentBlockParam[]).push(result);
+      } else {
+        msgs.push({ role: "user", content: [result] });
+      }
+      continue;
+    }
+
+    if (m.role === "assistant") {
+      const content: ContentBlockParam[] = [];
+      const text = typeof m.content === "string" ? m.content : "";
+      if (text) content.push({ type: "text", text });
+      for (const tc of m.tool_calls ?? []) {
+        let input: Record<string, unknown> = {};
+        try { input = JSON.parse(tc.function.arguments) as Record<string, unknown>; } catch { /* ignore */ }
+        content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+      }
+      msgs.push({ role: "assistant", content: content.length ? content : [{ type: "text", text: "" }] });
+      continue;
+    }
+
+    // user message
+    if (typeof m.content === "string") {
+      msgs.push({ role: "user", content: m.content });
+    } else {
+      const parts: ContentBlockParam[] = [];
+      for (const p of m.content) {
+        if (p.type === "text") {
+          parts.push({ type: "text", text: p.text });
+        } else if (p.type === "image_url") {
+          const url = p.image_url.url;
+          const match = url.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            parts.push({
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: match[1] as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+                data: match[2],
+              },
+            });
+          }
+        }
+      }
+      msgs.push({ role: "user", content: parts });
+    }
+  }
+
+  return { system, msgs };
+}
+
+/** Anthropic-native tool-calling completion. Preferred over OpenRouter when ANTHROPIC_API_KEY is set. */
+export async function completeWithToolsAnthropic(
+  messages: ChatMessage[],
+  tools: ToolDef[],
+  options: CompleteOptions = {},
+): Promise<ToolCompletion> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
+
+  const client = new Anthropic({ apiKey });
+  const model = options.model ?? process.env.AGENT_MODEL ?? "claude-sonnet-4-6";
+
+  const { system, msgs } = toAnthropicMessages(messages);
+
+  const anthropicTools: Tool[] = tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters as Tool["input_schema"],
+  }));
+
+  const timeoutMs = (() => {
+    if (typeof options.timeoutMs === "number" && options.timeoutMs > 0) return options.timeoutMs;
+    const env = Number(process.env.LLM_TIMEOUT_MS);
+    return Number.isFinite(env) && env > 0 ? env : 60_000;
+  })();
+
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), timeoutMs);
+
+  let response: Awaited<ReturnType<typeof client.messages.create>>;
+  try {
+    response = await client.messages.create(
+      {
+        model,
+        max_tokens: options.maxTokens ?? 1024,
+        ...(system ? { system } : {}),
+        tools: anthropicTools,
+        tool_choice: { type: "auto" },
+        messages: msgs,
+      },
+      { signal: abortController.signal },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let text = "";
+  const toolCalls: ToolCall[] = [];
+  for (const block of response.content) {
+    if (block.type === "text") text += block.text;
+    else if (block.type === "tool_use") {
+      toolCalls.push({
+        id: block.id,
+        name: block.name,
+        arguments: JSON.stringify(block.input),
+      });
+    }
+  }
+  return { text, toolCalls };
+}
+
+// ---- OpenRouter tool-calling -----------------------------------------------
 
 /**
  * Parse a tool call's raw `arguments` JSON into an object. Returns `{}` on any

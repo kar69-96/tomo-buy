@@ -28,6 +28,7 @@ Guidance:
 - For buying a specific product URL: [discover(url), login(domain), purchase(url)].
 - For booking/reserving anything that ends in payment (a reservation, ticket, appointment, registration, subscription): [login(domain), purchase(url)] — "purchase" covers any checkout that spends money, not just physical products.
 - For a natural-language shopping request with no URL: [discover(query)] only — a human picks the product before purchase.
+- For a multi-retailer product search or price comparison task (no specific URL, user wants options): [search(query)] or [search(query), compare_prices(query)].
 - Always insert a "login" step before "purchase" when the site may gate checkout.
 - purchase.selections MUST be a FLAT object of string keys to string values (e.g. {"date":"2026-07-15","quantity":"2","tier":"standard"}). Never nest objects or use non-string values.
 - Keep the plan minimal and efficient. Do not invent capabilities.`;
@@ -59,7 +60,7 @@ function safeDomain(url: string): string {
   }
 }
 
-const VALID = new Set(["discover", "login", "purchase"]);
+const VALID = new Set(["discover", "login", "purchase", "search", "compare_prices"]);
 
 /** Plan the ordered capability steps (no brief). */
 async function planSteps(task: string): Promise<ExecutionPlan> {

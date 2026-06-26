@@ -1,5 +1,5 @@
 {
-  "name": "@tomo/planner",
+  "name": "@tomo/browse-skills",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,9 +9,6 @@
   },
   "dependencies": {
     "@tomo/core": "workspace:*",
-    "@tomo/identity": "workspace:*",
-    "@tomo/checkout": "workspace:*",
-    "@tomo/orchestrator": "workspace:*",
-    "@tomo/browse-skills": "workspace:*"
+    "browse": "^0.9.0"
   }
 }

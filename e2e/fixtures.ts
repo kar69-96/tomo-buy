@@ -84,4 +84,8 @@ export const TASKS = {
   bigBoxAgent:
     process.env.E2E_BIGBOX_AGENT_TASK ??
     `Create an account and buy this item: ${BIGBOX_PRODUCT_URL}`,
+  /** Amazon with a fresh agent identity → agent login + create_account gate. */
+  amazonAgent:
+    process.env.E2E_AMAZON_AGENT_TASK ??
+    `Create an account and buy this item: ${AMAZON_PRODUCT_URL}`,
 } as const;

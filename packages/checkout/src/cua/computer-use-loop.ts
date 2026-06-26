@@ -12,7 +12,7 @@
  *                       (unchanged; secrets never reach the model)
  *
  * Activated when ANTHROPIC_API_KEY is set (and CUA_MODE != "tool-calling").
- * Override the model via CUA_NATIVE_MODEL (default: claude-3-5-sonnet-20241022).
+ * Override the model via CUA_NATIVE_MODEL (default: claude-sonnet-4-6).
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -20,7 +20,7 @@ import type {
   BetaMessage,
   BetaMessageParam,
   BetaTool,
-  BetaToolComputerUse20241022,
+  BetaToolComputerUse20250124,
   BetaToolResultBlockParam,
   BetaToolUseBlock,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
@@ -39,7 +39,7 @@ const DEFAULT_MAX_TOOL_CALLS = (() => {
 })();
 
 const NATIVE_MODEL =
-  process.env.CUA_NATIVE_MODEL ?? "claude-3-5-sonnet-20241022";
+  process.env.CUA_NATIVE_MODEL ?? "claude-sonnet-4-6";
 
 export const NATIVE_SYSTEM = `You are a computer-use agent completing a purchasing task in a real web browser. You see the page as a screenshot and control the browser exclusively with the computer tool.
 
@@ -212,8 +212,8 @@ export async function runCuaTaskNative(params: CuaParams): Promise<CuaResult> {
   await page.setViewportSize({ width: VIEWPORT_W, height: VIEWPORT_H }).catch(() => {});
 
   // Computer tool
-  const computerTool: BetaToolComputerUse20241022 = {
-    type: "computer_20241022",
+  const computerTool: BetaToolComputerUse20250124 = {
+    type: "computer_20250124",
     name: "computer",
     display_width_px: VIEWPORT_W,
     display_height_px: VIEWPORT_H,
@@ -258,7 +258,7 @@ export async function runCuaTaskNative(params: CuaParams): Promise<CuaResult> {
         system: NATIVE_SYSTEM,
         tools: [computerTool, ...capabilityTools],
         messages,
-        betas: ["computer-use-2024-10-22"],
+        betas: ["computer-use-2025-01-24"],
       });
     } catch (err) {
       log(`cua: model error: ${err instanceof Error ? err.message : String(err)}`);
