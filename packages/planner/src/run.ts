@@ -393,10 +393,17 @@ async function stepPurchase(
 
   // First entry: get a quote and pause for human confirmation.
   if (!ctx.purchase) {
+    // Use grounding-supplied price/name when available to skip re-scraping JS-heavy
+    // product pages (e.g. Nike) that already had price extracted at brief time.
+    const groundedCandidate = brief?.grounding?.candidates?.find((c) => c.url === url)
+      ?? brief?.grounding?.candidates?.[0];
+    const knownPrice = groundedCandidate?.price ? String(groundedCandidate.price) : undefined;
+    const knownProductName = groundedCandidate?.name;
+
     // allowUnpriced: in no-spend (dry-run) mode the checkout reads the actual total
     // from the payment page, so a failed upfront discovery is safe to degrade past.
     const dryRun = process.env.DRY_RUN_NO_SPEND === "1";
-    const order = await buy({ url, selections, allowUnpriced: briefDriven || dryRun });
+    const order = await buy({ url, selections, allowUnpriced: briefDriven || dryRun, knownPrice, knownProductName });
     const breakdown = buildBreakdown(order.payment);
     ctx.purchase = {
       order_id: order.order_id,

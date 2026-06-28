@@ -33,7 +33,7 @@ export const SYSTEM = `You are a careful, persistent computer-use agent operatin
 Operating rules:
 - The screenshot is what's really on screen. Many real controls (custom-styled links/buttons) are NOT in the element list — to click those, give the click tool the CENTER pixel x,y you see. To click a listed element, pass its ref.
 - ELEMENTS vs VISION: the numbered element list can be STALE or mis-mapped. If a numbered-ref click keeps failing or lands but does NOT move the page, STOP using that ref — find the same control in the SCREENSHOT and click it by its CENTER x,y pixel coordinates instead. When the element list and the screenshot disagree, TRUST THE SCREENSHOT.
-- SHOPPING FLOW: to buy an item, (1) add it to the cart, (2) OPEN the cart, (3) click Checkout/Continue, (4) sign in or create the account (call login), (5) fill shipping (fill_shipping), then stop at payment. Add to Cart usually updates IN PLACE (a cart-count badge or a mini-cart slides in) WITHOUT a full navigation — so a "no major page change" report after Add to Cart does NOT mean it failed. If the screenshot shows the item was added (cart count went up, an "added to cart" panel appeared), do NOT click Add to Cart again — move on to opening the cart and clicking Checkout. Add the item ONCE.
+- SHOPPING FLOW: to buy an item, (1) add it to the cart, (2) OPEN the cart, (3) click Checkout/Continue, (4) sign in or create the account (call login), (5) fill shipping (fill_shipping), then stop at payment. Add to Cart usually updates IN PLACE (a cart-count badge or a mini-cart slides in) WITHOUT a full navigation — so a "no major page change" report after Add to Cart does NOT mean it failed. If the screenshot shows the item was added (cart count went up, an "added to cart" panel appeared), do NOT click Add to Cart again — move on to opening the cart and clicking Checkout. Add the item ONCE. For size/variant selection, scroll to reveal the size grid first if it is below the fold — do not click a size until you can see it in the screenshot, then prefer the select_size tool (pass the exact size label, e.g. "10" or "M") over clicking the grid by coordinates — it is far more reliable on custom size grids. IMPORTANT: the "Add to Bag"/"Add to Cart" button is often FAR below the size selector — after selecting a size, scroll down until you can see the Add to Bag button in the screenshot, THEN click it. Do not guess its position; scroll until it is visually confirmed in the screenshot.
 - ALWAYS clear blockers first: if a cookie banner, newsletter/promo modal, or any overlay covers the page, close it (dismiss_popups, or click its × by coordinates) before anything else.
 - Some screenshot fields are SOLID BLACK boxes — those are intentionally redacted secret fields (card, personal info), already handled. Never try to "fix" or re-enter them.
 - For login, an emailed one-time code, the credit card, or the shipping form, CALL THE CAPABILITY TOOL (login / fill_otp / fill_card / fill_shipping). Never try to type a password, card number, or OTP yourself — you are not given those values.
@@ -48,6 +48,8 @@ export interface CuaParams {
   toolContext: ToolContext;
   /** Real PII values to redact from screenshots (never placed in the prompt). */
   piiValues?: string[];
+  /** The product URL the CUA should stay on. Used for waypoint recovery if the model drifts to the homepage. */
+  targetUrl?: string;
   /** Hard cap on tool calls before giving up. */
   maxToolCalls?: number;
   log?: (m: string) => void;
@@ -94,6 +96,22 @@ const REPEAT_LIMIT = 2; // identical dead action repeats before forced intervent
  * and trips the vision intervention, instead of evading it as a "new" action
  * every round. Ref clicks key on the ref; everything else on the raw args.
  */
+/**
+ * Returns true when the CUA has drifted to the site homepage from a product page.
+ * Only fires when origin matches (so cross-domain redirects like payment processors
+ * are not flagged) and the target was a specific path (not the homepage itself).
+ */
+function hasNavigatedAway(currentUrl: string, targetUrl: string): boolean {
+  try {
+    const cur = new URL(currentUrl);
+    const tgt = new URL(targetUrl);
+    if (cur.origin !== tgt.origin) return false;
+    return cur.pathname === "/" && tgt.pathname !== "/";
+  } catch {
+    return false;
+  }
+}
+
 function deadActionKey(name: string, argsJson: string): string {
   if (name === "click") {
     try {
@@ -232,10 +250,26 @@ export async function runCuaTask(params: CuaParams): Promise<CuaResult> {
   // model that keeps firing one dead action (e.g. clicking the same wrong pixel)
   // is forcibly redirected instead of burning the whole stall budget on it.
   const deadStreak = new Map<string, number>();
+  // Tracks how many corrective cycles each dead-action cell has triggered across
+  // the whole run (never resets). Enables escalating intervention on the 2nd+ cycle.
+  const deadStreakHistory = new Map<string, number>();
 
   while (toolCalls < maxToolCalls) {
     rounds++;
     const obs = await observeResilient(observe, page, piiValues, log);
+
+    // Waypoint guard: if the CUA drifted back to the site homepage (e.g. a stale
+    // ref navigated via the logo), inject a navigate-back directive before the model
+    // call. Only fires when no other prefix is already set (don't override a corrective).
+    if (params.targetUrl && !prefix && obs.signature.url) {
+      if (hasNavigatedAway(obs.signature.url, params.targetUrl)) {
+        log(`cua: drifted to ${obs.signature.url} — injecting navigate-back`);
+        prefix =
+          `You have navigated away from the product page to ${obs.signature.url}. ` +
+          `This is NOT the right page. Navigate back to the product URL: ${params.targetUrl}`;
+      }
+    }
+
     messages.push(observationMessage(prefix, obs));
     prefix = "";
 
@@ -273,6 +307,7 @@ export async function runCuaTask(params: CuaParams): Promise<CuaResult> {
     const sigBefore = obs.signature;
     let finish: FinishResult | undefined;
     let repeatedDead: string | undefined;
+    let anyToolSucceeded = false;
 
     for (const call of completion.toolCalls) {
       toolCalls++;
@@ -300,6 +335,12 @@ export async function runCuaTask(params: CuaParams): Promise<CuaResult> {
         if (n >= REPEAT_LIMIT) repeatedDead = sig;
       } else {
         deadStreak.delete(sig);
+        // Only an EXPLICIT success (ok === true) is progress for stall-reset. A tool
+        // that returns ok:undefined (read_total, finish, a no-op) is NOT progress —
+        // counting undefined as success let the loop reset its stall counter every
+        // round and spin to the full tool-call budget. scroll is excluded too: it
+        // reports no ok and scrolling alone is not progress.
+        if (result.ok === true && call.name !== "scroll") anyToolSucceeded = true;
       }
 
       if (result.finish) { finish = result.finish; break; }
@@ -311,24 +352,60 @@ export async function runCuaTask(params: CuaParams): Promise<CuaResult> {
     }
 
     // Repeated-dead-action guard: the model keeps firing the same action that
-    // doesn't land. Steer it to VISION — a ref that won't move the page is stale
-    // or mis-mapped, so the robust recovery is to click the control the model can
-    // SEE by its pixel coordinates, not to try yet another ref.
+    // doesn't land. Steer it to VISION on the first cycle; escalate to Escape +
+    // navigate-back on subsequent cycles for the same coordinate cell.
     if (repeatedDead) {
       deadStreak.delete(repeatedDead);
-      // Was the dead action a ref-based click? (deadActionKey → "click:ref:N".)
+      const histCount = (deadStreakHistory.get(repeatedDead) ?? 0) + 1;
+      deadStreakHistory.set(repeatedDead, histCount);
       const wasRefClick = repeatedDead.startsWith("click:ref:");
-      prefix = wasRefClick
-        ? `You repeated a ref click that keeps failing (${repeatedDead}) — the page did NOT change, so that element ref is stale, mis-mapped, or covered. ` +
-          "STOP clicking that ref. Look at the SCREENSHOT (the source of truth), find the control you want, and click it by its CENTER pixel coordinates: pass x,y to the click tool. Aim at the exact center of the word/icon you see."
-        : `You repeated an action that keeps failing (${repeatedDead}) — the page did NOT change, so that target is NOT where you think it is. ` +
-          "Do NOT issue it again. Re-read the SCREENSHOT and aim at the EXACT center of the visible control (a few pixels off hits the gap and nothing happens), or scroll to reveal it if it is off-screen, then act.";
+
+      if (histCount >= 5 && params.targetUrl) {
+        // Hard cap: the element is refusing all coordinate clicks — reload the page
+        // to reset its state and tell the model to use refs instead of coordinates.
+        log(`cua: deadStreak cycle ${histCount} on ${repeatedDead} — force-reloading ${params.targetUrl}`);
+        await page.goto(params.targetUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+        deadStreakHistory.delete(repeatedDead);
+        deadStreak.delete(repeatedDead);
+        prefix =
+          `The element at ${repeatedDead} has refused all ${histCount} click attempts. ` +
+          `The page has been reloaded. DO NOT click at those same coordinates again. ` +
+          `Look at the screenshot NOW and decide: ` +
+          `(1) If the target size appears highlighted or selected — it may already be chosen; click "Add to Bag" or "Add to Cart" directly. ` +
+          `(2) If the size appears greyed out or crossed out — that size is UNAVAILABLE; pick the closest available size instead. ` +
+          `(3) If neither, try a completely different method: scroll the page, look for a size dropdown, or use a ref number from the element list.`;
+      } else if (histCount >= 2) {
+        // Second+ corrective cycle on the same cell: auto-press Escape to dismiss
+        // any open overlay, then tell the model to check its location.
+        await page.keyboard.press("Escape").catch(() => {});
+        log(`cua: deadStreak cycle ${histCount} on ${repeatedDead} — pressed Escape`);
+        prefix =
+          `You have been stuck on the same area (${repeatedDead}) across multiple corrective cycles. ` +
+          `Escape was pressed to dismiss any open overlay or modal. ` +
+          (params.targetUrl
+            ? `Check the screenshot: if you are not on the product page (${params.targetUrl}), ` +
+              `call the navigate tool to return there. Then re-assess the page and try a completely different approach. ` +
+              `If coordinates keep failing, use the element's REF NUMBER from the element list instead.`
+            : `Re-read the screenshot carefully and try a completely different approach.`);
+      } else {
+        // First corrective cycle: steer to vision coordinates.
+        prefix = wasRefClick
+          ? `You repeated a ref click that keeps failing (${repeatedDead}) — the page did NOT change, so that element ref is stale, mis-mapped, or covered. ` +
+            "STOP clicking that ref. Look at the SCREENSHOT (the source of truth), find the control you want, and click it by its CENTER pixel coordinates: pass x,y to the click tool. Aim at the exact center of the word/icon you see."
+          : `The same action (${repeatedDead}) keeps failing — it was repeated with no visible page change. The click physically fired, but nothing changed. This means: ` +
+            "(a) the element is ALREADY in its intended state — look at the screenshot right now; if it appears selected/highlighted/active, SKIP this step and move to the NEXT action (e.g. if you were selecting a size, click 'Add to Bag' next); " +
+            "(b) the element is DISABLED or UNAVAILABLE — if so, try a completely different option; " +
+            "(c) the click is off-target — try a different visible control. " +
+            `DO NOT click at ${repeatedDead} again. Decide which case applies and act accordingly.`;
+      }
       continue; // skip stall accrual this round; the corrective gets a fresh look
     }
 
-    // Stall detection: a round that changed nothing on the page.
+    // Stall detection: a round that changed nothing on the page. Also reset when
+    // any tool succeeded (ok !== false) — e.g. dismiss_popups closing an overlay
+    // or scroll moving the page — even if the signature hash didn't change.
     const moved = advanced(sigBefore, await pageSignature(page));
-    if (moved) stallRounds = 0;
+    if (moved || anyToolSucceeded) stallRounds = 0;
     else if (++stallRounds >= STALL_LIMIT) {
       log(`cua: no progress for ${stallRounds} rounds — ending`);
       return { status: "stopped", note: "no progress", toolCalls, rounds };

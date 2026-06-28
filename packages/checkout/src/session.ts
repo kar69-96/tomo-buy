@@ -99,17 +99,26 @@ export async function createSession(
   // checkout run as that user. Generic; the dir is operator-provided, not per-site.
   const profileDir = process.env.BROWSER_PROFILE_DIR;
   if (profileDir) {
+    // BROWSER_PROFILE_DIR is the Chrome USER-DATA-DIR; a multi-profile install keeps
+    // each profile in a subdir (Default, "Profile 1", …). BROWSER_PROFILE_NAME selects
+    // which one via --profile-directory so the warmed-up profile's cookies/fingerprint
+    // are reused. Generic: both values are operator-provided, no per-site logic.
+    const profileName = process.env.BROWSER_PROFILE_NAME;
+    const profileArgs = [
+      "--disable-blink-features=AutomationControlled",
+      ...(profileName ? [`--profile-directory=${profileName}`] : []),
+    ];
     const context = await chromium
       .launchPersistentContext(profileDir, {
         channel: "chrome",
         headless,
-        args: ["--disable-blink-features=AutomationControlled"],
+        args: profileArgs,
         viewport: { width: 1280, height: 900 },
       })
       .catch(() =>
         chromium.launchPersistentContext(profileDir, {
           headless,
-          args: ["--disable-blink-features=AutomationControlled"],
+          args: profileArgs,
           viewport: { width: 1280, height: 900 },
         }),
       );

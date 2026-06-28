@@ -39,7 +39,8 @@ describe("buildToolset()", () => {
     const names = buildToolset({ dryRun: false }).map((t) => t.def.name).sort();
     expect(names).toEqual(
       [
-        "click", "dismiss_popups", "fill_card", "fill_otp", "fill_shipping",
+        "click", "dismiss_popups", "select_size", "add_to_bag",
+        "fill_card", "fill_otp", "fill_shipping",
         "finish", "login", "press", "read_total", "scroll", "select", "type",
       ].sort(),
     );

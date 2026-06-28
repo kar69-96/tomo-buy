@@ -50,7 +50,9 @@ export const BIGBOX_PRODUCT_URL =
 
 export const TASKS = {
   /** Guest: explicit "as a guest" makes the resolver pick the guest strategy. */
-  guest: `Buy this item and check out as a guest: ${GUEST_PRODUCT_URL}`,
+  guest:
+    process.env.E2E_GUEST_TASK ??
+    `Buy this item and check out as a guest: ${GUEST_PRODUCT_URL}`,
   /** New account: nudges the resolver toward an agent identity + create_account gate. */
   newAccount: `Create an account and buy this item: ${NEW_ACCOUNT_PRODUCT_URL}`,
   /**

@@ -26,6 +26,14 @@ export interface BuyInput {
    * strict.
    */
   allowUnpriced?: boolean;
+  /**
+   * Pre-discovered price (e.g. from grounding/Exa). When provided, skips the live
+   * discoverPrice() call entirely — useful when the product page is JS-heavy and
+   * blocks scraping but grounding already returned a reliable price.
+   */
+  knownPrice?: string;
+  /** Product name from grounding, paired with knownPrice. */
+  knownProductName?: string;
 }
 
 /**
@@ -94,34 +102,43 @@ export async function buy(input: BuyInput): Promise<Order> {
   // and throw only on genuinely malformed (non-string) input.
   const selections = normalizeSelections(input.selections);
 
-  // 3. Discover price. When allowUnpriced is set, a failed discovery is expected
-  //    (no product-page price to quote) — degrade to a price-unknown order so the
-  //    browser can still drive to payment and read the real total live.
+  // 3. Discover price. Use grounding-supplied price when available to avoid
+  //    re-scraping JS-heavy pages that already had their price extracted at
+  //    grounding time. Fall back to live discoverPrice() when no known price.
   let productName: string;
   let price: string;
   let priceSource: string;
   let imageUrl: string | undefined;
-  try {
-    const discovery = await discoverPrice(url, resolvedShipping);
-    productName = discovery.name;
-    price = discovery.price;
-    priceSource = discovery.method;
-    imageUrl = discovery.image_url;
-  } catch (e) {
-    if (e instanceof TomoError && !input.allowUnpriced) throw e;
-    if (!input.allowUnpriced) {
-      throw new TomoError(
-        ErrorCodes.PRICE_EXTRACTION_FAILED,
-        `Price discovery failed for ${url}: ${e instanceof Error ? e.message : "unknown error"}`,
-      );
-    }
-    // No price at quote time — the real total is read at the payment page.
-    productName = (() => {
+  if (input.knownPrice) {
+    price = input.knownPrice;
+    productName = input.knownProductName ?? (() => {
       try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
     })();
-    price = "0.00";
-    priceSource = "unpriced_booking";
+    priceSource = "grounding";
     imageUrl = undefined;
+  } else {
+    try {
+      const discovery = await discoverPrice(url, resolvedShipping);
+      productName = discovery.name;
+      price = discovery.price;
+      priceSource = discovery.method;
+      imageUrl = discovery.image_url;
+    } catch (e) {
+      if (e instanceof TomoError && !input.allowUnpriced) throw e;
+      if (!input.allowUnpriced) {
+        throw new TomoError(
+          ErrorCodes.PRICE_EXTRACTION_FAILED,
+          `Price discovery failed for ${url}: ${e instanceof Error ? e.message : "unknown error"}`,
+        );
+      }
+      // No price at quote time — the real total is read at the payment page.
+      productName = (() => {
+        try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+      })();
+      price = "0.00";
+      priceSource = "unpriced_booking";
+      imageUrl = undefined;
+    }
   }
 
   // 4. Calculate fees

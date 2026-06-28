@@ -88,6 +88,15 @@ function strOr(v: unknown, fallback: string): string {
   return typeof v === "string" && v.trim() ? v : fallback;
 }
 
+function isHomepage(url: string): boolean {
+  try {
+    const { pathname } = new URL(url);
+    return pathname === "/" || pathname === "";
+  } catch {
+    return false;
+  }
+}
+
 interface Grounding {
   /** "exa+discovery" | "url-fetch" | "llm-only". */
   method: string;
@@ -156,7 +165,17 @@ function resolveFlow(raw: unknown, task: string, objective: string): BriefFlow {
 }
 
 function normalize(r: RawBrief, g: Grounding, task: string): ExecutionBrief {
-  const url = strOr(r.url, g.url ?? "");
+  const llmUrl = strOr(r.url, "");
+  // When the task contained an explicit URL, grounding fetched that exact product page
+  // and g.url is authoritative — don't let the LLM override it with a browse/category URL.
+  // For Exa-search runs (no task URL), prefer the LLM's URL only if it's a specific
+  // product page (not a homepage), else fall back to Exa's top candidate.
+  const url =
+    g.method === "url-fetch"
+      ? strOr(g.url ?? "", llmUrl)
+      : llmUrl && !isHomepage(llmUrl)
+        ? llmUrl
+        : strOr(g.url ?? "", "");
   const domain = strOr(r.domain, url ? safeDomain(url) : "");
   const rawType = r.login?.type;
   const type: BriefLoginType = LOGIN_TYPES.includes(rawType as BriefLoginType)

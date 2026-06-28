@@ -26,13 +26,14 @@ import {
   scrollPage,
   pressKey,
   pageSignature,
-  advanced,
+  waitForAdvance,
 } from "../act.js";
 import {
   scriptedDismissPopups,
   scriptedFillShipping,
   scriptedFillVerificationCode,
   scriptedClickButton,
+  scriptedSelectOption,
   extractVisibleTotal,
 } from "../scripted-actions.js";
 import { scanAllFramesForCardFields } from "../fill.js";
@@ -117,16 +118,17 @@ function capitalize(s: string): string {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-/** Run a click and report whether the page meaningfully advanced (model feedback). */
+/**
+ * Format a click outcome for the model. Takes a `{ landed, moved }` result the
+ * caller already measured — `reportAdvance` does NO waiting or signature scanning
+ * of its own (the vision path gets both signals straight from `visionClick`; the
+ * ref path measures once via `waitForAdvance`). This removes the old double-settle.
+ */
 async function reportAdvance(
-  ctx: ToolContext,
   label: string,
-  act: () => Promise<boolean>,
+  act: () => Promise<{ landed: boolean; moved: boolean }>,
 ): Promise<ToolResult> {
-  const before = await pageSignature(ctx.page);
-  const landed = await act();
-  await ctx.page.waitForTimeout(600);
-  const moved = advanced(before, await pageSignature(ctx.page));
+  const { landed, moved } = await act();
   // For a ref click that won't take, point the model at vision: the ref is likely
   // stale/mis-mapped, so the recovery is to click the visible control by x,y.
   const isRefClick = label.startsWith("click #");
@@ -166,10 +168,17 @@ const clickTool: CuaTool = {
     const y = num(args.y);
     const ref = num(args.ref);
     if (x !== undefined && y !== undefined) {
-      return reportAdvance(ctx, `click (${x},${y})`, () => visionClick(ctx.page, x, y, ctx.log));
+      // visionClick reports both `landed` and `moved` itself — no re-measuring.
+      return reportAdvance(`click (${x},${y})`, () => visionClick(ctx.page, x, y, ctx.log));
     }
     if (ref !== undefined) {
-      return reportAdvance(ctx, `click #${ref}`, () => clickRef(ctx.page, ref, ctx.log));
+      // clickRef can't tell if the page moved; measure once via waitForAdvance.
+      return reportAdvance(`click #${ref}`, async () => {
+        const before = await pageSignature(ctx.page);
+        const landed = await clickRef(ctx.page, ref, ctx.log);
+        const { moved } = await waitForAdvance(ctx.page, before, { timeout: 700 });
+        return { landed, moved };
+      });
     }
     return {
       ok: false,
@@ -277,7 +286,88 @@ const dismissPopupsTool: CuaTool = {
   async run(ctx) {
     const closed = await scriptedDismissPopups(ctx.page);
     try { await ctx.page.keyboard.press("Escape"); } catch { /* best-effort */ }
-    return { text: closed.length ? `dismiss_popups: closed ${closed.length} overlay(s).` : "dismiss_popups: nothing to close (or use a click on the × you see)." };
+    // ok:true when an overlay was actually closed — closing a dialog DECREASES
+    // visDialogs, which advanced() does not count as progress, so the loop needs
+    // this explicit signal to avoid treating a successful dismiss as a stall.
+    // Nothing closed → ok:undefined (neutral): not progress, not a dead action.
+    return closed.length
+      ? { ok: true, text: `dismiss_popups: closed ${closed.length} overlay(s).` }
+      : { text: "dismiss_popups: nothing to close (or use a click on the × you see)." };
+  },
+};
+
+const addToBagTool: CuaTool = {
+  def: {
+    name: "add_to_bag",
+    description:
+      "Add the current item (with already-selected options) to the cart by clicking 'Add to Bag' / 'Add to Cart'. Use this after selecting all required options (size, color, etc.). Returns success or the error shown. Prefer this over a manual click when you cannot see the button clearly in the screenshot.",
+    parameters: { type: "object", properties: {} },
+  },
+  async run(ctx) {
+    const before = await pageSignature(ctx.page);
+
+    // Playwright locator auto-scrolls the element into view before clicking.
+    const locator = ctx.page
+      .locator(
+        'button:has-text("Add to Bag"), button:has-text("Add to Cart"), ' +
+          'button:has-text("Add To Bag"), button:has-text("Add To Cart")',
+      )
+      .first();
+
+    let clicked = false;
+    try {
+      if ((await locator.count()) > 0) {
+        await locator.scrollIntoViewIfNeeded({ timeout: 3000 });
+        await locator.click({ timeout: 5000 });
+        clicked = true;
+      }
+    } catch {
+      // fall through
+    }
+
+    if (!clicked) {
+      clicked = await scriptedClickButton(ctx.page, "add to bag/add to cart");
+    }
+
+    if (!clicked) {
+      return {
+        text: "add_to_bag: could not find an 'Add to Bag' or 'Add to Cart' button on this page. Make sure you have selected all required options (size, color, etc.) first, or scroll to reveal the button.",
+      };
+    }
+
+    const { moved } = await waitForAdvance(ctx.page, before, { timeout: 2500 });
+
+    return {
+      text: moved
+        ? "add_to_bag: clicked — page advanced (cart updated or checkout dialog opened)."
+        : "add_to_bag: clicked — no page change detected. Check the screenshot: if a 'Select a size' or similar prompt appeared, select the required option first, then call add_to_bag again.",
+    };
+  },
+};
+
+const selectSizeTool: CuaTool = {
+  def: {
+    name: "select_size",
+    description:
+      "Select a product size / variant option (e.g. a shoe size '10', a clothing size 'Medium', a color) by its visible label. Handles native radio buttons AND custom size grids built from styled divs. Prefer this over clicking a size grid by coordinates — it is far more reliable. Pass the exact label you see in the screenshot.",
+    parameters: {
+      type: "object",
+      properties: {
+        value: { type: "string", description: "The size/variant label to select, e.g. '10', 'M', 'Black'." },
+      },
+      required: ["value"],
+    },
+  },
+  async run(ctx, args) {
+    const value = str(args.value) ?? "";
+    if (!value) return { ok: false, text: "select_size: provide the size/variant label to select." };
+    const ok = await scriptedSelectOption(ctx.page, value, "radio").catch(() => false);
+    return ok
+      ? { ok: true, text: `select_size: selected "${value}".` }
+      : {
+          ok: false,
+          text: `select_size: could not select "${value}" — that size may be unavailable, out of stock, or labeled differently. Look at the screenshot: pick the closest AVAILABLE size, or click the size directly by its center x,y.`,
+        };
   },
 };
 
@@ -320,7 +410,7 @@ const fillOtpTool: CuaTool = {
 
     // Agent identity inbox (AgentMail).
     if (ctx.agentInboxId) {
-      code = await pollForVerificationCode(ctx.agentInboxId, since, 45_000).catch(() => null);
+      code = await pollForVerificationCode(ctx.agentInboxId, since, 180_000).catch(() => null);
     }
     // User's connected mailbox (Composio).
     if (!code) {
@@ -438,6 +528,8 @@ export function buildToolset(_ctx: Pick<ToolContext, "dryRun">): CuaTool[] {
     scrollTool,
     pressTool,
     dismissPopupsTool,
+    selectSizeTool,
+    addToBagTool,
     loginTool,
     fillOtpTool,
     fillCardTool,

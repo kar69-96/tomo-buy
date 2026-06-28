@@ -379,6 +379,10 @@ export interface PageSignature {
   elCount: number;
   visInputs: number;
   visDialogs: number;
+  /** Count of elements with aria-expanded="true" (panels/dropdowns/flyouts). */
+  ariaExpanded: number;
+  /** Text content of common cart-count elements — changes when items are added. */
+  cartCountText: string;
 }
 
 export async function pageSignature(page: Page): Promise<PageSignature> {
@@ -398,16 +402,27 @@ export async function pageSignature(page: Page): Promise<PageSignature> {
       for (const d of Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))) {
         if (isVis(d)) visDialogs++;
       }
+      // Count panels/menus/flyouts that are currently expanded.
+      const ariaExpanded = document.querySelectorAll('[aria-expanded="true"]').length;
+      // Cart count: look for common cart-count patterns across e-commerce sites.
+      const cartEl = document.querySelector(
+        '[data-qa="cart-count"], [data-testid*="cart-count" i], [data-testid*="bag-count" i], ' +
+        '[aria-label*="bag" i] [data-quantity], [aria-label*="cart" i] [data-quantity], ' +
+        '.cart-count, .bag-count, [class*="CartCount" i], [class*="cartCount" i]',
+      );
+      const cartCountText = cartEl ? (cartEl.textContent ?? "").trim() : "";
       return {
         url: location.href,
         title: document.title,
         elCount: document.querySelectorAll("*").length,
         visInputs,
         visDialogs,
+        ariaExpanded,
+        cartCountText,
       };
     })) as PageSignature;
   } catch {
-    return { url: page.url(), title: "", elCount: 0, visInputs: 0, visDialogs: 0 };
+    return { url: page.url(), title: "", elCount: 0, visInputs: 0, visDialogs: 0, ariaExpanded: 0, cartCountText: "" };
   }
 }
 
@@ -427,7 +442,86 @@ export function advanced(before: PageSignature, after: PageSignature): boolean {
   // A substantial DOM addition (a panel/menu mounting). A high threshold so ad/deal
   // tickers re-rendering a few nodes don't read as progress; a small DECREASE is noise.
   if (after.elCount - before.elCount >= 40) return true;
+  // A panel/dropdown/flyout that newly opened (e.g. Nike mini-cart after Add to Bag).
+  if (after.ariaExpanded > before.ariaExpanded) return true;
+  // Cart count changed — item was successfully added to bag.
+  if (after.cartCountText !== before.cartCountText && after.cartCountText !== "") return true;
   return false;
+}
+
+/**
+ * A cheap page signature for tight polling. Identical to {@link pageSignature}
+ * EXCEPT it skips the `document.querySelectorAll("*").length` full-DOM scan — the
+ * one O(all-nodes) field — and carries `baseElCount` forward instead, so the
+ * elCount-delta branch in {@link advanced} can never fire on lite data (the delta
+ * is always 0). All the other progress signals (url/title/dialogs/inputs/aria/cart)
+ * are specific-selector queries and stay. Use this only inside {@link waitForAdvance};
+ * the authoritative before/after comparison still uses the full signature.
+ */
+export async function pageSignatureLite(page: Page, baseElCount: number): Promise<PageSignature> {
+  try {
+    return (await page.evaluate((base: number) => {
+      const isVis = (el: Element): boolean => {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return false;
+        const s = getComputedStyle(el);
+        return s.visibility !== "hidden" && s.display !== "none";
+      };
+      let visInputs = 0;
+      for (const i of Array.from(document.querySelectorAll("input, textarea, select"))) {
+        if (isVis(i)) visInputs++;
+      }
+      let visDialogs = 0;
+      for (const d of Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))) {
+        if (isVis(d)) visDialogs++;
+      }
+      const ariaExpanded = document.querySelectorAll('[aria-expanded="true"]').length;
+      const cartEl = document.querySelector(
+        '[data-qa="cart-count"], [data-testid*="cart-count" i], [data-testid*="bag-count" i], ' +
+        '[aria-label*="bag" i] [data-quantity], [aria-label*="cart" i] [data-quantity], ' +
+        '.cart-count, .bag-count, [class*="CartCount" i], [class*="cartCount" i]',
+      );
+      const cartCountText = cartEl ? (cartEl.textContent ?? "").trim() : "";
+      return {
+        url: location.href,
+        title: document.title,
+        elCount: base,
+        visInputs,
+        visDialogs,
+        ariaExpanded,
+        cartCountText,
+      };
+    }, baseElCount)) as PageSignature;
+  } catch {
+    return { url: page.url(), title: "", elCount: baseElCount, visInputs: 0, visDialogs: 0, ariaExpanded: 0, cartCountText: "" };
+  }
+}
+
+/**
+ * Wait for the page to meaningfully advance from `before`, polling cheaply and
+ * returning THE INSTANT it does — instead of sleeping a fixed duration and checking
+ * once. Polls {@link pageSignatureLite} every `interval` ms up to `timeout`; on the
+ * first detected advance (or on final timeout) it takes ONE authoritative full
+ * {@link pageSignature}. Fast pages return in ~150–300ms; slow pages keep the full
+ * `timeout` cap, so worst-case behavior is unchanged. Generic; no site logic.
+ */
+export async function waitForAdvance(
+  page: Page,
+  before: PageSignature,
+  opts?: { timeout?: number; interval?: number },
+): Promise<{ moved: boolean; signature: PageSignature }> {
+  const timeout = opts?.timeout ?? 900;
+  const interval = opts?.interval ?? 120;
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(interval);
+    const lite = await pageSignatureLite(page, before.elCount);
+    if (advanced(before, lite)) {
+      return { moved: true, signature: await pageSignature(page) };
+    }
+  }
+  const full = await pageSignature(page);
+  return { moved: advanced(before, full), signature: full };
 }
 
 const VREF = "data-tomo-vref";
@@ -450,7 +544,7 @@ async function snapToClickable(
     return (await page.evaluate(
       ({ x, y, attr }) => {
         const clickableSel =
-          'a, button, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [onclick]';
+          'a, button, input, select, textarea, label, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="radio"], [role="checkbox"], [onclick]';
         const isClickable = (el: Element): boolean =>
           !!(el.matches && el.matches(clickableSel)) || getComputedStyle(el).cursor === "pointer";
         const stack = document.elementsFromPoint(x, y);
@@ -546,7 +640,7 @@ export async function visionClick(
   x: number,
   y: number,
   log: (m: string) => void = () => {},
-): Promise<boolean> {
+): Promise<{ landed: boolean; moved: boolean }> {
   const before = await pageSignature(page);
   const snap = await snapToClickable(page, x, y);
   let how = "";
@@ -554,19 +648,17 @@ export async function visionClick(
     if (snap.found && !snap.occluded) {
       await realPointerClick(page, x, y);
       how = "trusted";
-      await page.waitForTimeout(900);
-      if (advanced(before, await pageSignature(page))) {
+      if ((await waitForAdvance(page, before)).moved) {
         log(`act: vision click (${x},${y}) via ${how} → advanced`);
-        return true;
+        return { landed: true, moved: true };
       }
     }
     if (snap.found) {
       await dispatchSyntheticClick(page, x, y);
       how = how ? `${how}+synthetic` : "synthetic";
-      await page.waitForTimeout(900);
-      if (advanced(before, await pageSignature(page))) {
+      if ((await waitForAdvance(page, before)).moved) {
         log(`act: vision click (${x},${y}) via ${how} → advanced`);
-        return true;
+        return { landed: true, moved: true };
       }
     }
     if (!snap.found) {
@@ -578,8 +670,14 @@ export async function visionClick(
     await clearVref(page);
   }
   const moved = advanced(before, await pageSignature(page));
-  log(`act: vision click (${x},${y}) via ${how || "none"} → ${moved ? "advanced" : "no visible change"}`);
-  return moved;
+  // If we found and fired on a real element (snap.found), consider the click
+  // "landed" even when the page change is below the advanced() threshold (e.g.
+  // a size-selector CSS class toggle). reportAdvance's "check screenshot" branch
+  // handles this case: it tells the model to look at the screenshot and proceed
+  // if the effect is visible, or try a different approach if nothing changed.
+  // Only return landed:false when no clickable was found at all.
+  log(`act: vision click (${x},${y}) via ${how || "none"} → ${moved ? "advanced" : snap.found ? "sub-threshold change (landed)" : "no visible change"}`);
+  return { landed: snap.found || moved, moved };
 }
 
 const oneLine = (err: unknown): string =>
@@ -720,7 +818,7 @@ async function execStep(
   // Vision click by pixel coordinates (overlay-aware; see visionClick).
   if (step.action === "click" && typeof step.x === "number" && typeof step.y === "number") {
     try {
-      return await visionClick(page, step.x, step.y, log);
+      return (await visionClick(page, step.x, step.y, log)).landed;
     } catch (err) {
       log(`act: vision click (${step.x},${step.y}) failed: ${oneLine(err)}`);
       return false;

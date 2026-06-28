@@ -236,7 +236,7 @@ async function loginWithAgent(
   // If the agent inbox is available, opportunistically poll for an OTP step.
   if (plan.agentInboxId) {
     await page.waitForTimeout(2000);
-    const code = await pollForVerificationCode(plan.agentInboxId, since, 30_000);
+    const code = await pollForVerificationCode(plan.agentInboxId, since, 180_000);
     if (code) {
       const filled = await scriptedFillVerificationCode(page, code);
       if (filled) await clickAny(page, ["verify", ...SUBMIT_LABELS]);

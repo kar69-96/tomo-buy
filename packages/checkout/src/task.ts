@@ -195,7 +195,13 @@ function buildBriefInstruction(
   const params = Object.entries(brief.parameters ?? {})
     .map(([k, v]) => `${k}=${v}`)
     .join(", ");
+  // When login is handled reactively (agent identity, not proactive), strip any
+  // planner-generated steps that tell the model to navigate to find Sign In — those
+  // cause it to leave the product page and fight the waypoint guard. The signInRule
+  // below explains the correct reactive approach.
+  const filterLoginSteps = loginPlan && !wantsProactiveLogin(loginPlan);
   const steps = (brief.execution_steps ?? [])
+    .filter(s => !filterLoginSteps || !/\b(sign[\s-]?in|log[\s-]?in|create.*account|click.*sign|click.*log)/i.test(s))
     .map((s, i) => `${i + 1}. ${s}`)
     .join("\n");
   const constraints = (brief.constraints ?? []).length
@@ -214,7 +220,7 @@ function buildBriefInstruction(
     ? "ACCOUNT: this task runs on the user's own account. If a \"Log in\"/\"Sign in\" link is plainly visible (usually top-right), click it ONCE to open the login form — it is then completed automatically for you (do not type the email/password yourself, and do not retry). Do NOT let login block progress: completing the task is the priority — if login isn't readily available or doesn't complete, just continue."
     : "";
   const signInRule = wantsAccountLogin(loginPlan)
-    ? "Sign in only via the existing-account \"Log in\"/\"Sign in\" flow; never CREATE a new account."
+    ? "ACCOUNT: do NOT navigate away from the current page to find a sign-in page. Proceed with the task directly — if the site requires sign-in, a login form or dialog will appear on the current page. When it does, call the login tool immediately (it handles email, password, and OTP automatically). Never manually navigate to a login URL or type a password yourself."
     : "Never create an account or sign in unless the page blocks all further progress without it.";
   return [
     `Objective: ${brief.objective}`,
@@ -275,7 +281,7 @@ function buildPurchaseObjective(input: CheckoutInput): string {
     );
   } else if (wantsAccountLogin(input.loginPlan)) {
     lines.push(
-      'If a sign-in form appears and signing in is needed to proceed, call the login tool (existing account only; never create a new account).',
+      'ACCOUNT: do NOT navigate away from the product page to find a sign-in page. Proceed directly with the purchase flow — scroll down, select the size, and click "Add to Bag". If the site shows a sign-in form or dialog (it will appear on the current page or as a popup), call the login tool at that point. Never manually navigate to a login page, never type a password yourself — the login tool handles everything.',
     );
   } else {
     lines.push(
@@ -1054,6 +1060,7 @@ export async function runCheckout(
       tools: buildToolset({ dryRun: input.dryRun }),
       toolContext,
       piiValues,
+      targetUrl: url,
       log: (m) => console.log(m),
     });
 
