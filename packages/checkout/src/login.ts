@@ -27,6 +27,10 @@ export interface LoginPlan {
   strategy: LoginStrategy;
   /** Email/username typed into the form (LLM-safe, not a secret). */
   email: string;
+  /** Agent display name for registration forms (LLM-safe, not a secret). */
+  name?: string;
+  /** Agent phone for registration forms (LLM-safe, not a secret). */
+  phone?: string;
   /** SECRET — direct fill only. Present for agent identities. */
   password?: string;
   /** Cookies to seed for a session-token login (connected_session). */
@@ -120,6 +124,25 @@ const PASSWORD_SELECTORS = [
   "input[autocomplete=new-password]",
 ];
 
+// Full-name selectors for signup forms. Deliberately specific so they never
+// match an email/username field (which is filled separately) — no broad
+// `name*=name` that would collide with `username`.
+const NAME_SELECTORS = [
+  "input[autocomplete=name]",
+  "input[name=customerName]",
+  "input[id*=customer_name i]",
+  "input[name*=fullname i]",
+  "input[id*=fullname i]",
+  "input[name=your_name]",
+];
+
+const PHONE_SELECTORS = [
+  "input[type=tel]",
+  "input[autocomplete=tel]",
+  "input[name*=phone i]",
+  "input[id*=phone i]",
+];
+
 async function clickAny(page: Page, labels: string[]): Promise<boolean> {
   for (const label of labels) {
     if (await scriptedClickButton(page, label)) return true;
@@ -166,6 +189,13 @@ async function submitEmail(page: Page, plan: LoginPlan): Promise<boolean> {
   // Some forms show password on the same step.
   if (plan.password) {
     await fillBySelectors(page, PASSWORD_SELECTORS, plan.password);
+  }
+  // Registration forms commonly ask for a display name and phone. These are
+  // NOT secrets (the model may see them); fill them directly here, only when
+  // registering — a plain login never shows them.
+  if (plan.register) {
+    if (plan.name) await fillBySelectors(page, NAME_SELECTORS, plan.name);
+    if (plan.phone) await fillBySelectors(page, PHONE_SELECTORS, plan.phone);
   }
   const labels = plan.register ? [...REGISTER_LABELS, ...SUBMIT_LABELS] : SUBMIT_LABELS;
   const clicked = await clickAny(page, labels);

@@ -22,6 +22,7 @@ import {
   getAgentcardBufferPct,
   getAgentcardMaxAmount,
   getStopAfterLogin,
+  getAgentProfile,
   isFormFlowBrief,
 } from "@tomo/core";
 import { query, searchQuery, buy, confirm } from "@tomo/orchestrator";
@@ -513,9 +514,12 @@ async function buildLoginPlan(ctx: RunContext): Promise<LoginPlan | undefined> {
     const identity = getAgentIdentity(login.identity_id);
     if (!identity) return undefined;
     const site = await getOrCreateSiteAccount(identity, domain);
+    const profile = getAgentProfile();
     return {
       strategy: "agent",
       email: identity.email,
+      name: profile.name, // LLM-safe; fills signup name field
+      phone: profile.phone || undefined, // LLM-safe; empty unless SMS number set
       password: site.password, // ephemeral; never persisted/logged
       agentInboxId: identity.inbox_id,
       domain,

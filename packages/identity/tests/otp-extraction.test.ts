@@ -32,6 +32,23 @@ describe("extractCode", () => {
     expect(extractCode("Your security code is 246810")).toBe("246810");
   });
 
+  it("extracts Amazon's account-creation OTP (label split from code by punctuation)", () => {
+    // Real Amazon "Verify your new Amazon account" body. The code sits on its own
+    // line after "(OTP):", and the footer contains "share this OTP with anyone" —
+    // a former bug captured the word "with" (\\w) instead of the digits.
+    const body =
+      "Verify your new Amazon account\n\n" +
+      "To verify your email address, please use the following One Time Password (OTP):\n\n" +
+      ":726885\n\n" +
+      "Don't share this OTP with anyone. Amazon takes your account security very seriously.\n" +
+      "©2026 Amazon.com, Inc. 98109";
+    expect(extractCode(body)).toBe("726885");
+  });
+
+  it("does not capture a word after an OTP label that is far from any number", () => {
+    expect(extractCode("Don't share this OTP with anyone, ever.")).toBeNull();
+  });
+
   it("returns null when there is no code", () => {
     expect(extractCode("Welcome to the store! Thanks for signing up.")).toBeNull();
   });

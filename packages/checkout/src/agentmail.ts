@@ -5,6 +5,7 @@
  * verification codes sent to the agent's email address.
  */
 import { AgentMailClient } from "agentmail";
+import { extractCode } from "@tomo/identity";
 
 // ---- Singleton state ----
 
@@ -75,21 +76,11 @@ export function getAgentEmail(): string | null {
 }
 
 // ---- Verification code extraction ----
-
-const CODE_PATTERNS = [
-  /verification code[:\s]*(\w{4,8})/i,
-  /\bcode[:\s]+(\w{4,8})\b/i,
-  /\b(?:one-time|otp|passcode)[:\s]*(\w{4,8})\b/i,
-  /\b(\d{4,8})\b/, // numeric codes (4-8 digits) — broadest, check last
-];
-
-function extractCode(text: string): string | null {
-  for (const pattern of CODE_PATTERNS) {
-    const match = text.match(pattern);
-    if (match?.[1]) return match[1];
-  }
-  return null;
-}
+//
+// Uses the shared, digit-anchored extractor from @tomo/identity. (A previous
+// local copy used `\w{4,8}` and matched the word "with" out of "Don't share
+// this OTP with anyone" in Amazon's verification email — filling letters into
+// the OTP field. The identity version only ever yields a 4–8 DIGIT code.)
 
 /**
  * Poll the inbox for a verification code arriving after `sinceTimestamp`.

@@ -208,7 +208,7 @@ const typeTool: CuaTool = {
     const varName = str(args.var);
     if (varName) {
       if (isCdpField(varName)) {
-        return { text: `type: "${varName}" is a protected secret field — use fill_card / login instead. Skipped.` };
+        return { text: `type: "${varName}" is a protected secret field — use fill_password / fill_card / login instead. Skipped.` };
       }
       const value = ctx.variables[varName];
       if (!value) return { text: `type: no value for variable "${varName}".` };
@@ -462,6 +462,43 @@ const fillCardTool: CuaTool = {
   },
 };
 
+const fillPasswordTool: CuaTool = {
+  def: {
+    name: "fill_password",
+    description:
+      "Fill the account password field(s) on a sign-in or create-account form. The password is injected securely and is never shown to you — you only call this tool; you never type a password. Sign-up forms that repeat the password ('confirm password') are handled: every password field is filled with the same value. Call this whenever a password field is visible on a login or registration form. Returns how many fields were filled.",
+    parameters: { type: "object", properties: {} },
+  },
+  async run(ctx) {
+    const pw = ctx.cdpCreds.x_login_password;
+    if (!pw) {
+      return { text: "fill_password: no account password is configured for this task." };
+    }
+    let count = 0;
+    try {
+      count = await ctx.page.locator('input[type="password"]').count();
+    } catch {
+      count = 0;
+    }
+    let filled = 0;
+    for (let i = 0; i < count; i++) {
+      try {
+        await ctx.page.locator('input[type="password"]').nth(i).fill(pw, { timeout: 5000 });
+        filled += 1;
+      } catch {
+        // a field that won't accept input — skip it
+      }
+    }
+    return {
+      ok: filled > 0,
+      text:
+        filled > 0
+          ? `fill_password: filled ${filled} password field(s).`
+          : "fill_password: no password field found on this page yet — open the sign-in/create-account form first.",
+    };
+  },
+};
+
 const fillShippingTool: CuaTool = {
   def: {
     name: "fill_shipping",
@@ -532,6 +569,7 @@ export function buildToolset(_ctx: Pick<ToolContext, "dryRun">): CuaTool[] {
     addToBagTool,
     loginTool,
     fillOtpTool,
+    fillPasswordTool,
     fillCardTool,
     fillShippingTool,
     readTotalTool,
@@ -548,6 +586,7 @@ export function buildCapabilityToolset(_ctx: Pick<ToolContext, "dryRun">): CuaTo
   return [
     loginTool,
     fillOtpTool,
+    fillPasswordTool,
     fillCardTool,
     fillShippingTool,
     readTotalTool,

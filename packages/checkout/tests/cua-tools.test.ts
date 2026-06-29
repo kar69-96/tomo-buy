@@ -40,7 +40,7 @@ describe("buildToolset()", () => {
     expect(names).toEqual(
       [
         "click", "dismiss_popups", "select_size", "add_to_bag",
-        "fill_card", "fill_otp", "fill_shipping",
+        "fill_card", "fill_otp", "fill_password", "fill_shipping",
         "finish", "login", "press", "read_total", "scroll", "select", "type",
       ].sort(),
     );

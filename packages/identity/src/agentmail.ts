@@ -62,6 +62,14 @@ const CODE_PATTERNS = [
   new RegExp(`(?:verification|security|access)\\s*code(?:\\s+is)?[:\\s#]*${CODE_TOKEN}`, "i"),
   new RegExp(`\\b(?:one[-\\s]?time(?:\\s+(?:code|passcode|password))?|otp|passcode|pin)\\b(?:\\s+is)?[:\\s#]*${CODE_TOKEN}`, "i"),
   new RegExp(`\\bcode(?:\\s+is)?[:\\s#]+${CODE_TOKEN}`, "i"),
+  // Labeled code the sender separated from its label with punctuation / line
+  // breaks — e.g. Amazon's "One Time Password (OTP):\n\n:726885". Skip a BOUNDED
+  // run of non-digits so a label far from any number ("share this OTP with
+  // anyone") can't latch onto an unrelated number downstream.
+  new RegExp(
+    `(?:one[-\\s]?time\\s*password|otp|verification\\s*code|security\\s*code|passcode)\\b[^0-9]{0,24}?${CODE_TOKEN}`,
+    "i",
+  ),
   // Bare fallback: a standalone 4–8 digit run.
   /\b(\d{4,8})\b/,
 ];

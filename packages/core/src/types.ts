@@ -208,6 +208,16 @@ export interface AgentIdentity {
 }
 
 /**
+ * Public profile data for an agent identity, used to fill multi-field signup
+ * forms (name, phone). LLM-safe — these are NOT secrets and may be seen by the
+ * model. Config-sourced (AGENT_NAME / AGENT_PHONE), like card/shipping/billing.
+ */
+export interface AgentProfile {
+  name: string;
+  phone: string;
+}
+
+/**
  * A connection to the user's real email/provider (via Composio). Used both to
  * decide whether the user already has an account on a service and to read OTP
  * codes. `status` is "stub" until Composio is actually wired.

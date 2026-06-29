@@ -82,6 +82,48 @@ describe("executeLogin", () => {
     expect(values).toContain("S3cret-Direct-Fill!");
   });
 
+  it("fills agent name + phone directly when registering a new account", async () => {
+    const page = fakePage(
+      (sel) =>
+        sel.includes("email") ||
+        sel.includes("pass") ||
+        sel.includes("name") ||
+        sel.includes("tel") ||
+        sel.includes("phone"),
+    );
+    const plan: LoginPlan = {
+      strategy: "agent",
+      email: "agent@tomo.local",
+      password: "S3cret-Direct-Fill!",
+      name: "Tomo Shopper",
+      phone: "(415) 555-0142",
+      domain: "shop.example",
+      register: true,
+    };
+    const res = await executeLogin(page, ctx, plan);
+    expect(res.handled).toBe(true);
+    const values = page.fills.map((f) => f.value);
+    expect(values).toContain("Tomo Shopper");
+    expect(values).toContain("(415) 555-0142");
+  });
+
+  it("does not fill name/phone for a plain agent login (register off)", async () => {
+    const page = fakePage(() => true);
+    const plan: LoginPlan = {
+      strategy: "agent",
+      email: "agent@tomo.local",
+      password: "S3cret-Direct-Fill!",
+      name: "Tomo Shopper",
+      phone: "(415) 555-0142",
+      domain: "shop.example",
+      register: false,
+    };
+    await executeLogin(page, ctx, plan);
+    const values = page.fills.map((f) => f.value);
+    expect(values).not.toContain("Tomo Shopper");
+    expect(values).not.toContain("(415) 555-0142");
+  });
+
   it("handles a session-cookie login without typing a password", async () => {
     const page = fakePage(() => false);
     const plan: LoginPlan = {

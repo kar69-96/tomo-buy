@@ -3,6 +3,7 @@ import type {
   CardInfo,
   BillingInfo,
   ShippingInfo,
+  AgentProfile,
   TomoConfig,
 } from "./types.js";
 import { getConfig, saveConfig } from "./store.js";
@@ -155,6 +156,18 @@ export function getBillingInfo(): BillingInfo {
     state: process.env.BILLING_STATE || "",
     zip: process.env.BILLING_ZIP || "",
     country: process.env.BILLING_COUNTRY || "",
+  };
+}
+
+/**
+ * The agent identity's public profile for filling signup forms. Defaults to a
+ * neutral persona name; phone is empty unless an SMS-capable number is provided
+ * (some sites — notably Amazon — demand phone verification on registration).
+ */
+export function getAgentProfile(): AgentProfile {
+  return {
+    name: process.env.AGENT_NAME || "Tomo Shopper",
+    phone: process.env.AGENT_PHONE || "",
   };
 }
 
