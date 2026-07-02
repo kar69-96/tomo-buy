@@ -67,6 +67,16 @@ export {
   replayUrlFor,
 } from "./browserbase-session.js";
 
+// ---- Browserbase Agents checkout engine (primary when BROWSER_BACKEND=browserbase-agents) ----
+export { runCheckoutViaBrowserbaseAgents } from "./browserbase-agents/engine.js";
+export { buildAgentTask, assertNoCdpSecrets } from "./browserbase-agents/task-builder.js";
+export type { AgentTaskSpec } from "./browserbase-agents/task-builder.js";
+export { startRun, getRun } from "./browserbase-agents/client.js";
+export type { AgentRun, AgentRunRequest, AgentRunStatus, AgentVariable } from "./browserbase-agents/client.js";
+export { pollRun, isTerminal } from "./browserbase-agents/poll.js";
+export { AGENT_RESULT_SCHEMA, AgentResultSchema } from "./browserbase-agents/result-schema.js";
+export type { AgentResult } from "./browserbase-agents/result-schema.js";
+
 // ---- Agentcard funding ----
 export {
   issueCard,

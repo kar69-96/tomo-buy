@@ -19,7 +19,21 @@ This codebase is a fork of [`kar69-96/agentbuy`](https://github.com/kar69-96/age
 | LLM | Google Gemini | **OpenRouter** (key in `.env`) |
 | Discovery | Firecrawl + Browserbase+Gemini | **Exa + Playwright + OpenRouter** |
 
-The original Tomo-buy backend (Temporal/intent-router/vaults) is archived under `_tomo-archive/`.
+## Checkout backend (local vs Browserbase Agents)
+
+Checkout can be driven by either engine, selected via `BROWSER_BACKEND` (`packages/core` →
+`getBrowserBackend()`):
+
+- **`local`** (default) — local Playwright + the tool-calling CUA loop; card/login secrets filled via
+  CDP, never seen by the driving LLM. Runs out of the box.
+- **`browserbase-agents`** — Browserbase's **managed** Agents service drives a **remote** browser from a
+  natural-language task and returns structured output (`packages/checkout/src/browserbase-agents/`). It
+  is the **primary** driver when set, but because the browser is remote it **can never enter the card**
+  (that would send the PAN to Browserbase's cloud). So it drives to the payment page and **parks**
+  (`parkedAtPayment`), reporting the observed total; the **local CDP engine** then enters the card and
+  places the order — and is also the fallback on any Browserbase failure. Only non-secret data is passed,
+  as Browserbase `%variables%`; `assertNoCdpSecrets` throws by construction if any card/login secret ever
+  reaches the variable map. Uses ad-hoc runs (`POST /v1/agents/runs`). Requires `BROWSERBASE_API_KEY`.
 
 ## Prime directive (non-negotiable)
 
@@ -92,7 +106,8 @@ packages/
                   (cua/loop.ts drives the page via a strong vision model; cua/tools.ts is the
                   internal tool registry — click/type/scroll + login/fill_card/fill_otp/
                   fill_shipping), CDP card-fill, confirmation detection, AGENTCARD funding,
-                  credentials
+                  credentials; browserbase-agents/ = managed Browserbase Agents engine
+                  (primary when BROWSER_BACKEND=browserbase-agents; parks at payment, no card)
   checkout-http/  HTTP checkout engine (deferred; browser path is the v1 path)
   identity/       agent identities + connected accounts: encrypted vault, Composio stub,
                   AgentMail inboxes, LLM login-strategy resolver (agent vs user account)
@@ -102,7 +117,6 @@ packages/
   api/            Hono REST server: /api/query, /api/buy, /api/confirm, /api/run (+ /approve)
 docs/             user-facing API reference (docs/skill.md)
 plans/            agentbuy design docs (internal)
-_tomo-archive/    the original Tomo-buy backend + plans (reference only)
 .env              local secrets (gitignored) — OpenRouter + Exa keys
 ```
 

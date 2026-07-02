@@ -10,9 +10,14 @@ import {
   getFundingMode,
   getAgentcardBufferPct,
   getAgentcardMaxAmount,
+  getBrowserBackend,
 } from "@tomo/core";
-import { runCheckout, issueAndRevealCard } from "@tomo/checkout";
-import type { LoginPlan } from "@tomo/checkout";
+import {
+  runCheckout,
+  runCheckoutViaBrowserbaseAgents,
+  issueAndRevealCard,
+} from "@tomo/checkout";
+import type { LoginPlan, CheckoutResult } from "@tomo/checkout";
 import { selectEngine, runHTTPCheckout, invalidateProfile } from "@tomo/checkout-http";
 import { buildReceipt } from "./receipts.js";
 
@@ -34,6 +39,49 @@ function getDomain(url: string): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * Browserbase-Agents-primary checkout. Browserbase's managed agent drives a
+ * REMOTE browser to the payment page and PARKS — it never enters the card (card
+ * secrets must not leave for Browserbase's cloud, per the Prime Directive).
+ *
+ * - No-spend oversight run: the BB park at payment IS the deliverable. Fall back
+ *   to a local dry run if BB errors or doesn't reach payment.
+ * - Real spend: BB can't place the paid order, so after it reaches payment we run
+ *   the LOCAL CDP engine to enter the card and place the order. If BB errors, we
+ *   go straight to the local engine.
+ *
+ * `bbInput` carries NO card (never handed to Browserbase); `localInput` carries
+ * the card for the local finisher/fallback.
+ */
+async function runBrowserbaseAgentsPrimary(
+  bbInput: Parameters<typeof runCheckoutViaBrowserbaseAgents>[0],
+  isRealSpend: boolean,
+  localInput: Parameters<typeof runCheckout>[0],
+): Promise<CheckoutResult> {
+  let bb: CheckoutResult | null = null;
+  try {
+    bb = await runCheckoutViaBrowserbaseAgents(bbInput);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`[bb-agents] run errored (${msg.slice(0, 160)}); using local engine`);
+  }
+
+  if (!isRealSpend) {
+    // No-spend oversight: parking at payment is the result. Local is the fallback.
+    if (bb && bb.success) return bb;
+    console.log("[bb-agents] no-spend run did not reach payment; running local dry run");
+    return runCheckout(localInput);
+  }
+
+  // Real spend: the local CDP engine places the order regardless (BB has no card).
+  if (bb?.success && bb.parkedAtPayment) {
+    console.log(
+      `[bb-agents] reached payment (observed ${bb.finalTotal ?? "?"}); placing the order locally`,
+    );
+  }
+  return runCheckout(localInput);
 }
 
 export interface ConfirmInput {
@@ -143,8 +191,36 @@ export async function confirm(input: ConfirmInput): Promise<ConfirmResult> {
       getFundingMode() === "static" &&
       selectEngine(domain) === "http";
 
+    // Browserbase Agents is the primary driver when selected. It drives a remote
+    // browser and cannot enter the card, so it's excluded for the login-checkpoint
+    // probe (which exercises the LOCAL login executor) and for the HTTP engine.
+    const useBrowserbaseAgents =
+      getBrowserBackend() === "browserbase-agents" &&
+      !useHttp &&
+      !input.stopAfterLogin;
+
     let checkoutResult;
-    if (useHttp) {
+    if (useBrowserbaseAgents) {
+      // Never hand the card to Browserbase — bbInput omits it by construction.
+      const bbInput = {
+        order,
+        shipping: order.shipping,
+        selections: order.selections,
+        loginPlan,
+        dryRun: input.stopBeforePlaceOrder,
+        brief: input.brief,
+      };
+      const localInput = {
+        ...bbInput,
+        card,
+        stopAfterLogin: input.stopAfterLogin,
+      };
+      checkoutResult = await runBrowserbaseAgentsPrimary(
+        bbInput,
+        !input.stopBeforePlaceOrder,
+        localInput,
+      );
+    } else if (useHttp) {
       const httpResult = await runHTTPCheckout({
         order,
         shipping: order.shipping,

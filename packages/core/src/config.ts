@@ -96,6 +96,35 @@ export function getBrowserbaseProjectId(): string | null {
   return process.env.BROWSERBASE_PROJECT_ID || null;
 }
 
+// ---- Checkout backend (which engine drives the checkout) ----
+
+export type BrowserBackend = "local" | "browserbase-agents";
+
+/**
+ * Which engine drives checkout:
+ * - "local" (default): local Playwright + our tool-calling CUA loop; card/login
+ *   secrets are filled via CDP and never reach the driving LLM. Runs out of the box.
+ * - "browserbase-agents": Browserbase's MANAGED Agents service drives a remote
+ *   browser from a natural-language task and returns structured output. It is the
+ *   primary driver when selected, but it drives a REMOTE browser, so it must never
+ *   receive card/login secrets (Prime Directive) — it drives to the payment page
+ *   and parks; the local CDP engine remains the payment finisher AND the fallback.
+ *   Falls back to "local" unless BROWSERBASE_API_KEY is also set.
+ */
+export function getBrowserBackend(): BrowserBackend {
+  const wantsAgents = process.env.BROWSER_BACKEND === "browserbase-agents";
+  return wantsAgents && getBrowserbaseKey() ? "browserbase-agents" : "local";
+}
+
+/**
+ * Hard timeout (ms) for polling a Browserbase Agents run to a terminal state.
+ * Default 5 minutes.
+ */
+export function getAgentRunTimeoutMs(): number {
+  const v = Number(process.env.AGENT_RUN_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 300_000;
+}
+
 // ---- In-checkout LLM provider ----
 
 export type LlmProvider = "openrouter" | "gemini";

@@ -1,5 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { getBrowserRuntime, getLlmProvider } from "../src/config.js";
+import {
+  getBrowserRuntime,
+  getLlmProvider,
+  getBrowserBackend,
+  getAgentRunTimeoutMs,
+} from "../src/config.js";
 
 // Save/restore the env vars these accessors read so tests stay isolated.
 const KEYS = [
@@ -7,6 +12,8 @@ const KEYS = [
   "BROWSERBASE_API_KEY",
   "LLM_PROVIDER",
   "GEMINI_API_KEY",
+  "BROWSER_BACKEND",
+  "AGENT_RUN_TIMEOUT_MS",
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
@@ -60,5 +67,46 @@ describe("getLlmProvider", () => {
     process.env.LLM_PROVIDER = "gemini";
     process.env.GEMINI_API_KEY = "AItest";
     expect(getLlmProvider()).toBe("gemini");
+  });
+});
+
+describe("getBrowserBackend", () => {
+  it("defaults to local", () => {
+    clear();
+    expect(getBrowserBackend()).toBe("local");
+  });
+
+  it("stays local when browserbase-agents is requested but no key is set", () => {
+    clear();
+    process.env.BROWSER_BACKEND = "browserbase-agents";
+    expect(getBrowserBackend()).toBe("local");
+  });
+
+  it("switches to browserbase-agents only with both flag and key", () => {
+    clear();
+    process.env.BROWSER_BACKEND = "browserbase-agents";
+    process.env.BROWSERBASE_API_KEY = "bb_test";
+    expect(getBrowserBackend()).toBe("browserbase-agents");
+  });
+});
+
+describe("getAgentRunTimeoutMs", () => {
+  it("defaults to 5 minutes", () => {
+    clear();
+    expect(getAgentRunTimeoutMs()).toBe(300_000);
+  });
+
+  it("honors a positive override", () => {
+    clear();
+    process.env.AGENT_RUN_TIMEOUT_MS = "60000";
+    expect(getAgentRunTimeoutMs()).toBe(60_000);
+  });
+
+  it("ignores a non-positive/invalid override", () => {
+    clear();
+    process.env.AGENT_RUN_TIMEOUT_MS = "-5";
+    expect(getAgentRunTimeoutMs()).toBe(300_000);
+    process.env.AGENT_RUN_TIMEOUT_MS = "abc";
+    expect(getAgentRunTimeoutMs()).toBe(300_000);
   });
 });
